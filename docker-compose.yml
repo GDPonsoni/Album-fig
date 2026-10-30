@@ -1,0 +1,12 @@
+# Alternativa a dev/pg.mjs para quem tem Docker. Mesma porta e credenciais.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: album
+      POSTGRES_PASSWORD: album
+      POSTGRES_DB: album
+    ports: ["5433:5432"]
+    volumes: [albumdb:/var/lib/postgresql/data]
+volumes:
+  albumdb:
