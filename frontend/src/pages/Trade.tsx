@@ -8,19 +8,44 @@ import { buzz } from '../fx';
 
 type Duplicate = Card & { available: number };
 
+function DuplicatesPanel({ dupes }: { dupes: Duplicate[] }) {
+  const total = dupes.reduce((sum, item) => sum + item.available, 0);
+  return (
+    <section className="panel paper dupes-list">
+      <h2>Minhas repetidas{total ? ` (${total})` : ''}</h2>
+      {dupes.length ? (
+        <ul>
+          {dupes.map((item) => (
+            <li key={item.id}>
+              <div className="dupes-art">
+                <StickerArt card={item} />
+                <b className="qty">×{item.available}</b>
+              </div>
+              <span>{item.name}</span>
+              <small>{item.org_name}</small>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">Nenhuma repetida ainda. As que sobrarem dos pacotes aparecem aqui.</p>
+      )}
+    </section>
+  );
+}
+
 export function TradeHome() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [dupes, setDupes] = useState<number | null>(null);
+  const [dupes, setDupes] = useState<Duplicate[] | null>(null);
 
   useEffect(() => {
     api<{ token: string | null }>('/trades/current')
       .then((result) => result.token && navigate(`/trocar/${result.token}`, { replace: true }))
       .catch(() => {});
     api<Duplicate[]>('/inventory/duplicates')
-      .then((list) => setDupes(list.reduce((sum, item) => sum + item.available, 0)))
+      .then(setDupes)
       .catch(() => {});
   }, [navigate]);
 
@@ -47,10 +72,10 @@ export function TradeHome() {
           <li>A outra pessoa aponta a câmera do celular para ele.</li>
           <li>Cada um escolhe as repetidas e os dois aceitam.</li>
         </ol>
-        {dupes !== null ? <p className="muted">Você tem {dupes} {dupes === 1 ? 'repetida disponível' : 'repetidas disponíveis'}.</p> : null}
         <Message>{error}</Message>
         <button className="btn btn-primary btn-big" disabled={busy || !user?.verified} onClick={start}>Trocar</button>
       </section>
+      {dupes ? <DuplicatesPanel dupes={dupes} /> : null}
     </div>
   );
 }
