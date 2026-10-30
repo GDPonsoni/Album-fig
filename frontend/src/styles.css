@@ -380,6 +380,8 @@ button:disabled { cursor: default; }
 .flip-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 .flip-links a { color: var(--red-deep); font-weight: 700; padding: 6px 0; }
 .flip { cursor: pointer; }
+.flip-locked { cursor: default; }
+.flip-hint { color: #cfd6e6; font-size: 0.9rem; text-align: center; }
 .flip-actions { display: flex; gap: 10px; width: min(78vw, 320px); }
 .flip-actions .btn { flex: 1; }
 [data-fx='low'] .flip { transition: none; }
@@ -431,6 +433,38 @@ button:disabled { cursor: default; }
 .dev-tools { margin-top: 18px; border: 2px dashed var(--gold); background: var(--navy-deep); color: #fff; }
 .dev-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .dev-actions .btn { font-size: 0.85rem; }
+.reward { overflow: hidden auto; text-align: center; animation: reward-fade 0.2s ease-out; }
+.reward-kicker { position: relative; color: var(--gold); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.85rem; }
+.reward h2 { position: relative; font: 400 1.7rem/1.15 var(--display); }
+.reward-text { position: relative; color: #cfd6e6; }
+.reward-pack { position: relative; width: min(52vw, 200px); aspect-ratio: 3 / 4; animation: reward-pop 0.6s cubic-bezier(.2,1.5,.4,1) both, reward-float 2.6s 0.6s ease-in-out infinite; filter: drop-shadow(0 0 22px rgb(224 165 38 / 0.55)); }
+.reward .opener-actions { position: relative; }
+.reward-confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.reward-confetti i { position: absolute; top: -16px; left: var(--x); width: 9px; height: 15px; border-radius: 2px; background: var(--c); animation: reward-fall 2.6s var(--delay) linear infinite; }
+.reward-confetti i:nth-child(1) { --x: 9%; --delay: 0.0s; --c: var(--gold); --spin: 180deg; }
+.reward-confetti i:nth-child(2) { --x: 46%; --delay: 0.7s; --c: var(--red); --spin: 263deg; }
+.reward-confetti i:nth-child(3) { --x: 83%; --delay: 1.4s; --c: #fff; --spin: 346deg; }
+.reward-confetti i:nth-child(4) { --x: 20%; --delay: 0.3s; --c: #4a78d0; --spin: 429deg; }
+.reward-confetti i:nth-child(5) { --x: 57%; --delay: 1.0s; --c: var(--gold); --spin: 512deg; }
+.reward-confetti i:nth-child(6) { --x: 94%; --delay: 1.7s; --c: var(--red); --spin: 235deg; }
+.reward-confetti i:nth-child(7) { --x: 31%; --delay: 0.6s; --c: #fff; --spin: 318deg; }
+.reward-confetti i:nth-child(8) { --x: 68%; --delay: 1.3s; --c: #4a78d0; --spin: 401deg; }
+.reward-confetti i:nth-child(9) { --x: 5%; --delay: 0.2s; --c: var(--gold); --spin: 484deg; }
+.reward-confetti i:nth-child(10) { --x: 42%; --delay: 0.9s; --c: var(--red); --spin: 207deg; }
+.reward-confetti i:nth-child(11) { --x: 79%; --delay: 1.6s; --c: #fff; --spin: 290deg; }
+.reward-confetti i:nth-child(12) { --x: 16%; --delay: 0.5s; --c: #4a78d0; --spin: 373deg; }
+.reward-confetti i:nth-child(13) { --x: 53%; --delay: 1.2s; --c: var(--gold); --spin: 456deg; }
+.reward-confetti i:nth-child(14) { --x: 90%; --delay: 0.1s; --c: var(--red); --spin: 539deg; }
+.reward-confetti i:nth-child(15) { --x: 27%; --delay: 0.8s; --c: #fff; --spin: 262deg; }
+.reward-confetti i:nth-child(16) { --x: 64%; --delay: 1.5s; --c: #4a78d0; --spin: 345deg; }
+.reward-confetti i:nth-child(17) { --x: 1%; --delay: 0.4s; --c: var(--gold); --spin: 428deg; }
+.reward-confetti i:nth-child(18) { --x: 38%; --delay: 1.1s; --c: var(--red); --spin: 511deg; }
+@keyframes reward-fade { from { opacity: 0; } }
+@keyframes reward-pop { from { transform: scale(0.3) rotate(-14deg); opacity: 0; } }
+@keyframes reward-float { 50% { transform: translateY(-8px) rotate(1.5deg); } }
+@keyframes reward-fall { to { transform: translateY(105vh) rotate(var(--spin)); } }
+[data-fx='low'] .reward, [data-fx='low'] .reward-pack { animation: none; }
+[data-fx='low'] .reward-confetti { display: none; }
 .code-form { display: flex; gap: 8px; }
 .code-form input { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: 15px; letter-spacing: 0.02em; }
 
@@ -495,7 +529,8 @@ button:disabled { cursor: default; }
 .dupes h3 { font-size: 1rem; }
 .dupes-list ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 14px 10px; }
 .dupes-list li { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dupes-art { position: relative; aspect-ratio: 3 / 4; margin-bottom: 4px; }
+.dupes-art { position: relative; display: block; width: 100%; aspect-ratio: 3 / 4; padding: 0; border: 0; background: none; margin-bottom: 4px; cursor: pointer; transition: transform 0.12s; }
+.dupes-art:active { transform: scale(0.96); }
 .dupes-list span { font-size: 0.82rem; font-weight: 700; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dupes-list small { color: var(--muted); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ending-done h2 { color: var(--green); font: 400 1.5rem var(--display); }

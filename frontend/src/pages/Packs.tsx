@@ -277,20 +277,38 @@ function DevTools({ onChanged, onCode }: { onChanged: () => void; onCode: (code:
   );
 }
 
-function RedeemForm({ onRedeemed, disabled, code, setCode }: { onRedeemed: () => void; disabled: boolean; code: string; setCode: (code: string) => void }) {
-  const [state, setState] = useState<{ ok?: string; error?: string }>({});
+function CodeReward({ grant, onOpen, onClose }: { grant: GrantView; onOpen: () => void; onClose: () => void }) {
+  useEffect(() => buzz([30, 40, 70]), []);
+  return (
+    <div className="overlay reward" role="dialog" aria-label="Código resgatado">
+      <div className="reward-confetti" aria-hidden="true">
+        {Array.from({ length: 18 }, (_, i) => <i key={i} />)}
+      </div>
+      <p className="reward-kicker">Código resgatado!</p>
+      <h2>Você ganhou um pacote</h2>
+      <div className="reward-pack"><Wrapper grant={grant} /></div>
+      <p className="reward-text">{grant.name} com {grant.stickers_per_pack} figurinhas esperando por você.</p>
+      <div className="opener-actions">
+        <button className="btn btn-primary btn-big" onClick={onOpen}>Abrir agora</button>
+        <button className="btn btn-ghost" onClick={onClose}>Guardar para depois</button>
+      </div>
+    </div>
+  );
+}
+
+function RedeemForm({ onRedeemed, disabled, code, setCode }: { onRedeemed: (grant: GrantView) => void; disabled: boolean; code: string; setCode: (code: string) => void }) {
+  const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
-    setState({});
+    setError('');
     try {
       const grant = await post<GrantView>('/codes/redeem', { code });
-      setState({ ok: `${grant.name} adicionado ao seu estoque.` });
       setCode('');
-      onRedeemed();
+      onRedeemed(grant);
     } catch (err) {
-      setState({ error: (err as Error).message });
+      setError((err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -310,10 +328,9 @@ function RedeemForm({ onRedeemed, disabled, code, setCode }: { onRedeemed: () =>
           value={code}
           onChange={(event) => setCode(event.target.value)}
         />
-        <button className="btn btn-primary" disabled={busy || disabled}>Resgatar</button>
+        <button className="btn btn-primary" disabled={busy || disabled}>{busy ? 'Resgatando…' : 'Resgatar'}</button>
       </form>
-      {state.ok ? <Message kind="ok">{state.ok}</Message> : null}
-      {state.error ? <Message>{state.error}</Message> : null}
+      {error ? <Message>{error}</Message> : null}
     </section>
   );
 }
@@ -325,6 +342,7 @@ export function PacksPage() {
   const [opening, setOpening] = useState<GrantView | null>(null);
   const [error, setError] = useState('');
   const [code, setCode] = useState('');
+  const [reward, setReward] = useState<GrantView | null>(null);
 
   const load = useCallback(async () => {
     const result = await api<Stock>('/packs');
@@ -359,7 +377,14 @@ export function PacksPage() {
           {data.dev_tools && user?.verified ? <DevTools onChanged={reload} onCode={setCode} /> : null}
         </>
       ) : null}
-      <RedeemForm onRedeemed={reload} disabled={!user?.verified} code={code} setCode={setCode} />
+      <RedeemForm onRedeemed={(grant) => { setReward(grant); reload(); }} disabled={!user?.verified} code={code} setCode={setCode} />
+      {reward ? (
+        <CodeReward
+          grant={reward}
+          onOpen={() => { setReward(null); setOpening(reward); }}
+          onClose={() => setReward(null)}
+        />
+      ) : null}
       {opening ? (
         <Opener
           key={opening.id}
