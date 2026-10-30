@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, post, type AlbumIndex, type Card, type PageDetail, type PageMeta, type Slot } from '../api';
 import { useAuth } from '../auth';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { lowFx, buzz } from '../fx';
 
 const pageKey = (page: { org_id: number; page_no: number }) => `${page.org_id}:${page.page_no}`;
-const INDEX_KEY = 'album:page';
 
 function CoverPage({ index, goTo }: { index: AlbumIndex; goTo: (page: number) => void }) {
   const percent = index.total ? Math.round((100 * index.filled) / index.total) : 0;
@@ -156,13 +156,10 @@ export function AlbumPage() {
   const { user } = useAuth();
   const [index, setIndex] = useState<AlbumIndex | null>(null);
   const [details, setDetails] = useState<Record<string, PageDetail>>({});
-  const [current, setCurrent] = useState(() => {
-    try {
-      return Number(sessionStorage.getItem(INDEX_KEY)) || 0;
-    } catch {
-      return 0;
-    }
-  });
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [params] = useSearchParams();
+  const current = Math.max(0, Math.floor(Number(params.get('pagina'))) || 0);
   const [error, setError] = useState('');
   const [open, setOpen] = useState<Card | null>(null);
   const [lastPasted, setLastPasted] = useState<number | null>(null);
@@ -192,21 +189,37 @@ export function AlbumPage() {
       const page = pages[position];
       if (page && !detailsRef.current[pageKey(page)]) loadPage(page).catch(() => {});
     }
-    try {
-      sessionStorage.setItem(INDEX_KEY, String(safeCurrent));
-    } catch {
-      /* preferência de conveniência */
-    }
   }, [safeCurrent, pages, loadPage]);
 
+  // A página fica na URL. Sair da capa empilha no histórico e folhear não, então
+  // o voltar do celular leva de qualquer página para a capa, e não para fora do app.
+  const cameFromCover = (location.state as { fromCover?: boolean } | null)?.fromCover === true;
+  const goToPage = useCallback(
+    (target: number) => {
+      if (target === 0) {
+        if (cameFromCover) navigate(-1);
+        else navigate('/', { replace: true });
+      } else {
+        navigate(`/?pagina=${target}`, safeCurrent === 0 ? { state: { fromCover: true } } : { replace: true, state: location.state });
+      }
+    },
+    [cameFromCover, location.state, navigate, safeCurrent],
+  );
+
   const animating = useRef(false);
+  const settle = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    settle.current?.();
+    settle.current = null;
+  }, [safeCurrent]);
+
   const slideTo = useCallback(
     (target: number) =>
       new Promise<void>((resolve) => {
         const track = trackRef.current;
         const direction = Math.sign(target - safeCurrent);
         if (!track || direction === 0 || lowFx() || Math.abs(target - safeCurrent) > 1) {
-          setCurrent(target);
+          goToPage(target);
           resolve();
           return;
         }
@@ -216,16 +229,17 @@ export function AlbumPage() {
           { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'forwards' },
         );
         animation.onfinish = () => {
-          setCurrent(target);
-          requestAnimationFrame(() => {
+          // Só desfaz o deslize quando a nova página já está na tela, para não piscar.
+          settle.current = () => {
             track.style.transform = '';
             animation.cancel();
             animating.current = false;
             resolve();
-          });
+          };
+          goToPage(target);
         };
       }),
-    [safeCurrent],
+    [goToPage, safeCurrent],
   );
 
   // Swipe: arrasta a faixa com a página e as vizinhas; passou do limite, vira.
@@ -315,11 +329,18 @@ export function AlbumPage() {
     <div className="album">
       {!user?.verified ? <VerifyBanner /> : null}
       <div className="album-bar">
-        <button className="round" aria-label="Página anterior" disabled={safeCurrent === 0} onClick={() => slideTo(safeCurrent - 1)}>‹</button>
+        {safeCurrent > 0 ? (
+          <button className="back-to-cover" onClick={() => goToPage(0)}>
+            <span aria-hidden="true">←</span> Capa
+          </button>
+        ) : null}
         <div className="album-bar-text">
           <strong>{meta ? meta.org_name : 'Capa'}</strong>
           <small>{meta ? `${meta.kind === 'mosaic' ? 'Mosaico' : `Página ${meta.page_no}`} · ${meta.filled}/${meta.total}` : `${index.filled} de ${index.total} figurinhas`}</small>
         </div>
+        {safeCurrent > 0 ? (
+          <button className="round" aria-label="Página anterior" onClick={() => slideTo(safeCurrent - 1)}>‹</button>
+        ) : null}
         <button className="round" aria-label="Próxima página" disabled={safeCurrent === lastIndex} onClick={() => slideTo(safeCurrent + 1)}>›</button>
       </div>
 

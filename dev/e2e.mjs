@@ -109,18 +109,46 @@ for (let i = 0; i < 12; i += 1) {
   await ana.waitForTimeout(900);
 }
 
-// Swipe entre páginas
-const before = await ana.locator('.album-bar-text').innerText();
-const stage = await ana.locator('.album-stage').boundingBox();
-await ana.mouse.move(stage.x + stage.width - 30, stage.y + stage.height / 2);
-await ana.mouse.down();
-await ana.mouse.move(stage.x + 30, stage.y + stage.height / 2, { steps: 8 });
-await ana.mouse.up();
-await ana.waitForTimeout(450);
-const after = await ana.locator('.album-bar-text').innerText();
-if (before === after) problems.push('swipe não mudou de página');
-else step('swipe muda de página');
+// Swipe entre páginas, nos dois sentidos, a partir de uma página conhecida
+async function swipe(page, fromRight) {
+  const box = await page.locator('.album-stage').boundingBox();
+  const [start, end] = fromRight ? [box.x + box.width - 30, box.x + 30] : [box.x + 30, box.x + box.width - 30];
+  await page.mouse.move(start, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(end, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(450);
+  return page.locator('.album-bar-text').innerText();
+}
+await ana.goto(BASE);
+await ana.getByRole('button', { name: /Tubarões da Engenharia/ }).click();
+await ana.locator('.album-bar-text').getByText('Página 1').waitFor();
+if (!(await swipe(ana, true)).includes('Página 2')) problems.push('swipe para a esquerda não avançou');
+if (!(await swipe(ana, false)).includes('Página 1')) problems.push('swipe para a direita não voltou');
+if (!(await swipe(ana, false)).includes('Capa')) problems.push('swipe não voltou para a capa');
+if (new URL(ana.url()).search) problems.push('capa ficou com página na URL');
 await shot(ana, '10-swipe');
+step('swipe nos dois sentidos, até a capa');
+
+// Voltar para a capa: pelo botão e pelo voltar do celular, de qualquer página
+await ana.getByRole('button', { name: /Tubarões da Engenharia/ }).click();
+await ana.getByRole('button', { name: 'Capa' }).click();
+await ana.getByRole('button', { name: /Lobos da Arquitetura/ }).waitFor();
+await ana.getByRole('button', { name: /Corujas da Medicina/ }).click();
+await ana.locator('.album-bar-text').getByText('Corujas da Medicina').waitFor();
+await shot(ana, '10b-dentro-da-org');
+await ana.getByRole('button', { name: 'Próxima página' }).click();
+await ana.waitForTimeout(350);
+await ana.goBack();
+await ana.getByRole('button', { name: /Lobos da Arquitetura/ }).waitFor();
+if (new URL(ana.url()).pathname !== '/') problems.push('voltar do celular saiu do álbum');
+await ana.goForward();
+await ana.locator('.album-bar-text').getByText('Corujas da Medicina').waitFor();
+await ana.reload();
+await ana.locator('.album-bar-text').getByText('Corujas da Medicina').waitFor();
+await ana.getByRole('button', { name: 'Capa' }).click();
+await ana.getByRole('button', { name: /Lobos da Arquitetura/ }).waitFor();
+step('capa pelo botão e pelo voltar; recarregar mantém a página');
 
 // ---- Mosaico: vai até a última página da primeira org
 await ana.goto(BASE);
