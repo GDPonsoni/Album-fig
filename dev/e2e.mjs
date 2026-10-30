@@ -96,9 +96,15 @@ step('figurinha colada e progresso atualizado');
 const filled = ana.locator('.album-panel [data-slot]:not([disabled])').first();
 if (await filled.count()) {
   await filled.click();
-  await ana.getByRole('button', { name: 'Fechar' }).waitFor();
-  await ana.waitForTimeout(800);
+  const virar = ana.getByRole('button', { name: 'Virar' });
+  await virar.waitFor();
+  if (await ana.locator('.flip.flipped').count()) throw new Error('figurinha virou sozinha');
+  await virar.click();
+  await ana.locator('.flip.flipped').waitFor();
+  await ana.waitForTimeout(600);
   await shot(ana, '09-verso');
+  await ana.getByRole('button', { name: 'Ver frente' }).click();
+  await ana.locator('.flip:not(.flipped)').waitFor();
   await ana.getByRole('button', { name: 'Fechar' }).click();
   step('verso visível depois de colar');
 }

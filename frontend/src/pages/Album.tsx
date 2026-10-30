@@ -123,17 +123,77 @@ function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail; onOpen
   );
 }
 
+/** Faixa com rolagem lateral. No toque a rolagem é nativa; com mouse, arrasta ou usa as setas. */
+function TrayRow({ children }: { children: React.ReactNode }) {
+  const row = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; left: number; moved: boolean } | null>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+
+  const measure = useCallback(() => {
+    const el = row.current;
+    if (el) setEdges({ start: el.scrollLeft > 2, end: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
+  }, []);
+  useEffect(() => {
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [measure, children]);
+
+  const scrollBy = (direction: number) => {
+    const el = row.current;
+    el?.scrollBy({ left: direction * el.clientWidth * 0.8, behavior: lowFx() ? 'auto' : 'smooth' });
+  };
+  const onPointerDown = (event: ReactPointerEvent) => {
+    if (event.pointerType === 'mouse' && row.current) drag.current = { x: event.clientX, left: row.current.scrollLeft, moved: false };
+  };
+  const onPointerMove = (event: ReactPointerEvent) => {
+    const state = drag.current;
+    if (!state || !row.current) return;
+    const dx = event.clientX - state.x;
+    if (Math.abs(dx) > 5) state.moved = true;
+    if (state.moved) row.current.scrollLeft = state.left - dx;
+  };
+  return (
+    <div className={`tray-scroller${edges.start ? ' more-start' : ''}${edges.end ? ' more-end' : ''}`}>
+      <div
+        className="tray-row"
+        ref={row}
+        onScroll={measure}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => { window.setTimeout(() => { drag.current = null; }); }}
+        onPointerLeave={() => { drag.current = null; }}
+        onClickCapture={(event) => {
+          // Soltar depois de arrastar não pode colar a figurinha que estava sob o mouse.
+          if (drag.current?.moved) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}
+      >
+        {children}
+      </div>
+      {edges.start ? <button className="tray-arrow tray-arrow-start" aria-label="Figurinhas anteriores" onClick={() => scrollBy(-1)}>‹</button> : null}
+      {edges.end ? <button className="tray-arrow tray-arrow-end" aria-label="Mais figurinhas" onClick={() => scrollBy(1)}>›</button> : null}
+    </div>
+  );
+}
+
 function BackSheet({ card, onClose }: { card: Card; onClose: () => void }) {
   const [back, setBack] = useState<{ back_text: string; back_links: { label: string; url: string }[] } | null>(null);
   const [flipped, setFlipped] = useState(false);
   useEffect(() => {
     api(`/stickers/${card.id}/back`).then(setBack).catch(onClose);
-    const timer = window.setTimeout(() => setFlipped(true), lowFx() ? 0 : 280);
-    return () => window.clearTimeout(timer);
   }, [card.id, onClose]);
   return (
     <div className="overlay" onClick={onClose}>
-      <div className={`flip${flipped ? ' flipped' : ''}`} onClick={(event) => event.stopPropagation()}>
+      <div
+        className={`flip${flipped ? ' flipped' : ''}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setFlipped((value) => !value);
+        }}
+      >
         <div className="flip-face"><StickerArt card={card} /></div>
         <div className="flip-face flip-back paper">
           <p className="flip-org" style={{ color: card.org_color }}>{card.org_name}</p>
@@ -142,11 +202,14 @@ function BackSheet({ card, onClose }: { card: Card; onClose: () => void }) {
           <p>{back?.back_text}</p>
           <div className="flip-links">
             {back?.back_links.map((link) => (
-              <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
+              <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>{link.label}</a>
             ))}
           </div>
-          <button className="btn" onClick={onClose}>Fechar</button>
         </div>
+      </div>
+      <div className="flip-actions" onClick={(event) => event.stopPropagation()}>
+        <button className="btn btn-primary" onClick={() => setFlipped((value) => !value)}>{flipped ? 'Ver frente' : 'Virar'}</button>
+        <button className="btn btn-ghost" onClick={onClose}>Fechar</button>
       </div>
     </div>
   );
@@ -363,8 +426,8 @@ export function AlbumPage() {
       <section className={`tray${index.tray.length ? '' : ' tray-empty'}`} aria-label="Bandeja de figurinhas para colar">
         {index.tray.length ? (
           <>
-            <p className="tray-label"><b>{index.tray.length}</b> para colar · toque na figurinha</p>
-            <div className="tray-row">
+            <p className="tray-label"><b>{index.tray.length}</b> para colar · toque para colar, deslize para ver mais</p>
+            <TrayRow>
               {index.tray.map((card) => (
                 <button
                   key={card.id}
@@ -376,7 +439,7 @@ export function AlbumPage() {
                   <StickerArt card={card} />
                 </button>
               ))}
-            </div>
+            </TrayRow>
           </>
         ) : (
           <p className="tray-label">Bandeja vazia. Abra um pacote para ganhar figurinhas.</p>
