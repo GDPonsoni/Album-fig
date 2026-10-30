@@ -158,7 +158,7 @@ def paste(db: Session, user: User, sticker_id: int) -> Sticker:
 
 
 def sticker_back(db: Session, user: User, sticker_id: int) -> dict:
-    """O verso só existe para quem colou a figurinha (RF-34)."""
+    """O verso só existe para quem colou a figurinha."""
     row = db.get(UserSticker, (user.id, sticker_id))
     if row is None or not row.pasted:
         raise HTTPException(403, "Cole a figurinha para ver o verso.")

@@ -1,4 +1,4 @@
-// Degradação suave (seção 8): em aparelho fraco a figurinha aparece sem animação.
+// Degradação suave: em aparelho fraco a figurinha aparece sem animação.
 let low = false;
 
 function apply(value: boolean) {

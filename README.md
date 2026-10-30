@@ -1,6 +1,14 @@
 # Álbum da Calourada
 
-Álbum de figurinhas digital, web e mobile-first. Requisitos em `REQUISITOS_MVP.md`.
+Álbum de figurinhas digital da calourada, web e mobile-first. Cada organização estudantil tem suas páginas no álbum, e os calouros completam a coleção abrindo pacotes, resgatando códigos espalhados pelo campus e trocando repetidas ao vivo.
+
+## O que dá para fazer
+
+- **Álbum:** páginas por organização e mosaicos que se revelam peça a peça. O verso da figurinha só aparece depois de colar.
+- **Pacotes:** gaveta de 3 espaços abastecida por um timer contínuo, com sorteio feito no servidor.
+- **Códigos:** cada um vale um pacote extra e só pode ser usado uma vez.
+- **Trocas:** em tempo real, por QR ou link, com aceite dos dois lados.
+- **Admin:** orgs, figurinhas, raridades, tipos de pacote, códigos, parâmetros e métricas.
 
 **Stack:** React + Vite + TypeScript (PWA), FastAPI + SQLAlchemy + Alembic, PostgreSQL, WebSocket nas trocas.
 
@@ -54,6 +62,8 @@ cd backend && .venv/bin/alembic upgrade head
 .venv/bin/uvicorn app.main:app --port 8000 --proxy-headers
 ```
 
+- **`APP_ENV=prod` é obrigatório.** Fora de produção ficam ligados a caixa de e-mails em `/api/dev/mailbox`, que expõe links de confirmação e de troca de senha, e os atalhos temporários que dão pacotes e códigos.
+- As contas e senhas de teste só existem com `seed-demo`, que é recusado em produção.
 - **Use um processo só (sem `--workers`).** Os avisos em tempo real da troca ficam em memória. Com mais processos, o aviso só chega por leitura periódica (5 s) até o `Hub` passar a usar LISTEN/NOTIFY.
 - `--proxy-headers` é necessário atrás de proxy; sem ele, o limite de tentativas por IP trata todo mundo como um único IP.
 - Faça backup de `backend/media/`, onde ficam as imagens.
@@ -69,22 +79,21 @@ Pesos, quantidades, tetos, tempos e limites ficam na aba **Parâmetros** e nos t
 
 Seguimos [Conventional Commits](https://www.conventionalcommits.org/pt-br/): `tipo(escopo): descrição`, com tipos como `feat`, `fix`, `docs`, `test`, `refactor` e `chore`.
 
-## Diferenças em relação ao modelo de dados da seção 6
+## Regras do jogo
 
-- `user.next_pack_at`: fim do ciclo atual do timer da gaveta, que nunca para.
+- O timer da gaveta é um ciclo único por jogador e nunca para. Abrir um pacote não mexe nele, e o ciclo que termina com a gaveta cheia não entrega nada.
+- O tempo fora do app conta, até encher a gaveta. Pacotes de código ficam fora dela.
+- Em dia de premium, o primeiro pacote entregue no dia é o premium.
+- Repetida é tudo além de 1 exemplar, colado ou não; esse exemplar nunca pode ser trocado.
+- Cada lado precisa oferecer pelo menos 1 figurinha para aceitar uma troca.
+- O sorteio evita repetir figurinha no mesmo pacote enquanto houver opção.
+
+## Modelo de dados
+
+Campos que não são óbvios pelo nome:
+
+- `user.next_pack_at`: fim do ciclo atual do timer da gaveta.
 - `user.last_daily_grant_on`: dia da última entrega, usado no premium e nos pacotes de boas-vindas.
-- `user_session`, `email_token`, `rate_limit_event`: tabelas de sessão, links de e-mail e limite de tentativas.
 - `rarity.rank`: ordena raridades para a garantia mínima.
 - `pack_type.slug`: referência estável usada nos parâmetros.
-- `org.mosaic_cols` e `mosaic_rows`: formato do mosaico.
-- `sticker.number` e `hint`: número e dica do espaço vazio.
-- `pack_opening_item.position`: chave da linha.
-- `trade.creator_accepted_version` e `partner_accepted_version`: substituem `trade_offer.accepted_version`, porque o aceite é de cada lado, não de cada figurinha.
-
-## Regras decididas onde os requisitos deixavam espaço
-
-- Repetida é tudo além de 1 exemplar, colado ou não; esse exemplar nunca pode ser trocado.
-- Cada lado precisa oferecer pelo menos 1 figurinha para aceitar.
-- A concessão diária não acumula dias sem acesso.
-- Em dia de premium, o premium é concedido primeiro; se o teto cortar algo, corta o comum.
-- O sorteio evita repetir figurinha no mesmo pacote enquanto houver opção.
+- `trade.creator_accepted_version` e `partner_accepted_version`: o aceite é de cada lado e vale para uma versão da oferta.

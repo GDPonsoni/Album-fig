@@ -7,7 +7,7 @@ def test_colar_verso_e_progresso(db, content, make_user, give, login):
     sticker = content[0]
     give(user, sticker, 2)
 
-    # RF-34: antes de colar, nem verso nem imagem/nome no espaço.
+    # Antes de colar, nem verso nem imagem/nome no espaço.
     assert client.get(f"/api/stickers/{sticker.id}/back").status_code == 403
     page = client.get(f"/api/album/orgs/{sticker.org_id}/pages/1").json()
     slot = next(s for s in page["slots"] if s["sticker_id"] == sticker.id)

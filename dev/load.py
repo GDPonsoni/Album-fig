@@ -1,4 +1,4 @@
-"""Teste de carga leve (RNF-06): N jogadores simultâneos no servidor em execução.
+"""Teste de carga leve: N jogadores simultâneos no servidor em execução.
 Uso, de dentro de backend/: .venv/bin/python ../dev/load.py [jogadores] [rodadas] [pausa_s]
 Pausa 0 é o pior caso; com 2 ou mais segundos o ritmo se parece com o de gente jogando.
 Cria contas temporárias no banco configurado e as apaga no final."""

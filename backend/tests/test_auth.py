@@ -26,7 +26,7 @@ def test_cadastro_confirmacao_e_login(db):
     login = client.post("/api/auth/login", json={"email": "nova@example.com", "password": SIGNUP["password"]})
     assert login.status_code == 200 and login.json()["verified"] is False
 
-    # RF-02: sem confirmar não recebe nem abre pacotes.
+    # Sem confirmar não recebe nem abre pacotes.
     assert client.get("/api/packs").json()["stock"] == []
     assert client.post("/api/trades").status_code == 403
 

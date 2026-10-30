@@ -211,7 +211,7 @@ export function AlbumPage() {
     loadIndex().catch((err) => setError(err.message));
   }, [loadIndex]);
 
-  // RF-35: só a página atual e as vizinhas são pedidas ao servidor.
+  // Só a página atual e as vizinhas são pedidas ao servidor.
   useEffect(() => {
     for (const position of [safeCurrent, safeCurrent - 1, safeCurrent + 1]) {
       const page = pages[position];

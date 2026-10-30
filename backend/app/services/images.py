@@ -6,7 +6,7 @@ from PIL import Image
 
 from app.settings import settings
 
-MAX_BYTES = 150 * 1024  # RNF-05
+MAX_BYTES = 150 * 1024
 
 
 def save_webp(image: Image.Image, folder: str = "uploads", max_side: int = 900) -> str:

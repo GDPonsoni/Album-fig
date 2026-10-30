@@ -54,7 +54,7 @@ def generate_mosaic(db: Session, org: Org, cols: int, rows: int, rarity_id: int)
 
 
 def delete_sticker(db: Session, sticker: Sticker) -> list[int]:
-    """Remove de verdade (RNF-08): imagem, inventários e ofertas. Trocas em curso
+    """Remove de verdade: imagem, inventários e ofertas. Trocas em curso
     ganham nova versão de oferta, para ninguém concluir sobre dados antigos."""
     affected = list(
         db.scalars(

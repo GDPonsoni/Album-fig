@@ -1,4 +1,4 @@
-"""parâmetros, raridades e tipos de pacote iniciais (seção 7 dos requisitos)
+"""parâmetros, raridades e tipos de pacote iniciais
 
 Revision ID: 0002
 Revises: 0001

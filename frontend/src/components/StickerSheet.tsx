@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type Card } from '../api';
 import { StickerArt } from './ui';
 
-/** Figurinha ampliada. O verso só existe para quem já colou (RF-34). */
+/** Figurinha ampliada. O verso só existe para quem já colou. */
 export function StickerSheet({ card, onClose, pasted = true }: { card: Card; onClose: () => void; pasted?: boolean }) {
   const [back, setBack] = useState<{ back_text: string; back_links: { label: string; url: string }[] } | null>(null);
   const [flipped, setFlipped] = useState(false);

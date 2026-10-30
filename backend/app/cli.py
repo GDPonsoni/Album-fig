@@ -32,7 +32,7 @@ def create_admin(email: str, nickname: str) -> None:
 
 
 def purge_campaign() -> None:
-    """Fim da campanha (RNF-08): apaga contas de jogadores e tudo que depende delas."""
+    """Fim da campanha: apaga contas de jogadores e tudo que depende delas."""
     with SessionLocal() as db:
         players = db.scalar(select(User.id).where(User.is_admin.is_(False)).limit(1))
         if players is None:

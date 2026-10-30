@@ -117,7 +117,7 @@ def set_offer(db: Session, user: User, token: str, items: dict[int, int]) -> Tra
         db.delete(offer)
     db.flush()
     db.add_all(TradeOffer(trade_id=trade.id, user_id=user.id, sticker_id=s, quantity=q) for s, q in items.items())
-    # Nova versão: os aceites anteriores deixam de valer (RF-43).
+    # Nova versão: os aceites anteriores deixam de valer.
     trade.offer_version += 1
     return trade
 
