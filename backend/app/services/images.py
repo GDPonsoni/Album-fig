@@ -1,12 +1,34 @@
 import io
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
+import boto3
+from botocore.exceptions import ClientError
 from PIL import Image
 
 from app.settings import settings
 
 MAX_BYTES = 150 * 1024
+
+
+@lru_cache
+def _r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com",
+        aws_access_key_id=settings.r2_access_key_id,
+        aws_secret_access_key=settings.r2_secret_access_key,
+        region_name="auto",
+    )
+
+
+def _r2_key(url: str | None) -> str | None:
+    """Só URLs do nosso bucket viram chave: o admin também pode informar imagens externas."""
+    prefix = f"{settings.r2_public_url}/"
+    if not url or not settings.r2_enabled or not url.startswith(prefix):
+        return None
+    return url.removeprefix(prefix)
 
 
 def save_webp(image: Image.Image, folder: str = "uploads", max_side: int = 900) -> str:
@@ -25,6 +47,14 @@ def save_webp(image: Image.Image, folder: str = "uploads", max_side: int = 900) 
             break
         image = image.resize((int(image.width * 0.8), int(image.height * 0.8)))
     name = f"{uuid.uuid4().hex}.webp"
+    if settings.r2_enabled:
+        key = f"{folder}/{name}"
+        # O nome é único, então a imagem nunca muda e o navegador pode guardá-la.
+        _r2_client().put_object(
+            Bucket=settings.r2_bucket, Key=key, Body=data, ContentType="image/webp",
+            CacheControl="public, max-age=31536000, immutable",
+        )
+        return f"{settings.r2_public_url}/{key}"
     target = settings.media_dir / folder
     target.mkdir(parents=True, exist_ok=True)
     (target / name).write_bytes(data)
@@ -39,14 +69,30 @@ def open_upload(data: bytes) -> Image.Image:
     return image
 
 
-def local_path(url: str | None) -> Path | None:
+def _local_path(url: str | None) -> Path | None:
     if not url or not url.startswith("/media/"):
         return None
     path = (settings.media_dir / url.removeprefix("/media/")).resolve()
     return path if path.is_relative_to(settings.media_dir.resolve()) else None
 
 
+def read_media(url: str | None) -> bytes | None:
+    """Conteúdo de uma imagem enviada ao servidor; None se for externa ou não existir."""
+    key = _r2_key(url)
+    if key is not None:
+        try:
+            return _r2_client().get_object(Bucket=settings.r2_bucket, Key=key)["Body"].read()
+        except ClientError:
+            return None
+    path = _local_path(url)
+    return path.read_bytes() if path is not None and path.exists() else None
+
+
 def remove_media(url: str | None) -> None:
-    path = local_path(url)
+    key = _r2_key(url)
+    if key is not None:
+        _r2_client().delete_object(Bucket=settings.r2_bucket, Key=key)
+        return
+    path = _local_path(url)
     if path is not None:
         path.unlink(missing_ok=True)

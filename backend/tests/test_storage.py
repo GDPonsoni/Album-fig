@@ -1,0 +1,82 @@
+import io
+from unittest.mock import patch
+
+import pytest
+from botocore.exceptions import ClientError
+from PIL import Image
+
+from app.services import images, mail
+from app.settings import Settings, settings
+
+PUBLIC = "https://imagens.example.com"
+
+
+class FakeR2:
+    def __init__(self):
+        self.objects = {}
+
+    def put_object(self, Bucket, Key, Body, **_):
+        self.objects[Key] = Body
+
+    def get_object(self, Bucket, Key):
+        if Key not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": io.BytesIO(self.objects[Key])}
+
+    def delete_object(self, Bucket, Key):
+        self.objects.pop(Key, None)
+
+
+@pytest.fixture
+def r2(monkeypatch):
+    fake = FakeR2()
+    monkeypatch.setattr(settings, "r2_bucket", "album")
+    monkeypatch.setattr(settings, "r2_public_url", PUBLIC)
+    monkeypatch.setattr(images, "_r2_client", lambda: fake)
+    return fake
+
+
+def test_imagem_vai_para_o_r2_e_volta(r2):
+    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers")
+    assert url.startswith(f"{PUBLIC}/stickers/")
+    assert images.read_media(url) == r2.objects[url.removeprefix(f"{PUBLIC}/")]
+    images.remove_media(url)
+    assert r2.objects == {}
+    assert images.read_media(url) is None
+
+
+def test_url_externa_nunca_e_tocada(r2):
+    r2.objects["x.webp"] = b"nosso"
+    images.remove_media("https://outro-site.example.com/x.webp")
+    assert images.read_media("https://outro-site.example.com/x.webp") is None
+    assert r2.objects == {"x.webp": b"nosso"}
+
+
+def test_sem_r2_continua_no_disco(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "media_dir", tmp_path)
+    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers")
+    assert url.startswith("/media/stickers/")
+    assert images.read_media(url)
+    images.remove_media(url)
+    assert images.read_media(url) is None
+
+
+def test_caminho_fora_da_pasta_de_midia_e_recusado(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "media_dir", tmp_path / "media")
+    (tmp_path / "segredo").write_text("x")
+    assert images.read_media("/media/../segredo") is None
+
+
+@pytest.mark.parametrize("url", ["postgresql://u:p@h/d?sslmode=require", "postgres://u:p@h/d?sslmode=require"])
+def test_url_do_banco_usa_psycopg(url):
+    assert Settings(database_url=url).database_url == "postgresql+psycopg://u:p@h/d?sslmode=require"
+
+
+def test_email_sai_pela_api_com_a_chave(monkeypatch):
+    monkeypatch.setattr(settings, "brevo_api_key", "chave")
+    with patch("urllib.request.urlopen") as urlopen:
+        mail.send_mail("a@example.com", "Oi", "Corpo")
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "https://api.brevo.com/v3/smtp/email"
+    assert request.get_header("Api-key") == "chave"
+    assert b"a@example.com" in request.data

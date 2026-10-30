@@ -66,7 +66,8 @@ cd backend && .venv/bin/alembic upgrade head
 - As contas e senhas de teste só existem com `seed-demo`, que é recusado em produção.
 - **Use um processo só (sem `--workers`).** Os avisos em tempo real da troca ficam em memória. Com mais processos, o aviso só chega por leitura periódica (5 s) até o `Hub` passar a usar LISTEN/NOTIFY.
 - `--proxy-headers` é necessário atrás de proxy; sem ele, o limite de tentativas por IP trata todo mundo como um único IP.
-- Faça backup de `backend/media/`, onde ficam as imagens.
+- Em servidor sem disco persistente, guarde as imagens no Cloudflare R2 (`R2_*`); sem isso, elas ficam em `backend/media/`, que precisa de backup.
+- Se o servidor bloquear SMTP, como o plano gratuito do Render, envie os e-mails pela API do Brevo (`BREVO_API_KEY`).
 - Fim da campanha (LGPD, irreversível): `python -m app.cli purge-campaign --confirm`.
 
 ## Conteúdo

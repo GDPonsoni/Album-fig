@@ -1,10 +1,12 @@
 """Operações de conteúdo compartilhadas entre o admin e o seed."""
+import io
+
 from PIL import Image
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Org, Sticker, Trade, TradeOffer
-from app.services.images import local_path, remove_media, save_webp
+from app.services.images import read_media, remove_media, save_webp
 
 
 def next_number(db: Session) -> int:
@@ -13,8 +15,8 @@ def next_number(db: Session) -> int:
 
 def generate_mosaic(db: Session, org: Org, cols: int, rows: int, rarity_id: int) -> list[Sticker]:
     """Corta a imagem do mosaico em peças e substitui as peças antigas da org."""
-    path = local_path(org.mosaic_image_url)
-    if path is None or not path.exists():
+    source = read_media(org.mosaic_image_url)
+    if source is None:
         raise ValueError("A org precisa de uma imagem de mosaico enviada ao servidor.")
     for old in db.scalars(select(Sticker).where(Sticker.org_id == org.id, Sticker.is_mosaic_piece.is_(True))):
         delete_sticker(db, old)
@@ -23,7 +25,7 @@ def generate_mosaic(db: Session, org: Org, cols: int, rows: int, rarity_id: int)
     org.mosaic_cols, org.mosaic_rows = cols, rows
     number = next_number(db)
     pieces = []
-    with Image.open(path) as image:
+    with Image.open(io.BytesIO(source)) as image:
         image = image.convert("RGBA")
         width, height = image.width / cols, image.height / rows
         for index in range(cols * rows):
