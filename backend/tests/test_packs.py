@@ -94,7 +94,7 @@ def test_conta_nao_confirmada_nao_recebe(db, make_user):
     assert user.next_pack_at is None
 
 
-def test_entrega_quando_o_timer_acaba_e_para_com_a_gaveta_cheia(db, make_user):
+def test_entrega_quando_o_timer_acaba_e_o_ciclo_segue_com_a_gaveta_cheia(db, make_user):
     user = make_user("Timer")
     start = _at(2026, 3, 10)
     with _clock(start):
@@ -104,7 +104,7 @@ def test_entrega_quando_o_timer_acaba_e_para_com_a_gaveta_cheia(db, make_user):
     with _clock(start + REFILL):
         assert refill_drawer(db, user) == 1
     assert _daily_stock(db, user) == 3
-    assert user.next_pack_at is None
+    assert user.next_pack_at == start + 2 * REFILL
 
 
 def _open_daily(db, user):
@@ -115,20 +115,30 @@ def _open_daily(db, user):
     db.commit()
 
 
-def test_abrir_com_a_gaveta_cheia_reinicia_o_timer(db, content, make_user):
-    user = make_user("Reinicia")
+def test_abrir_pacote_nao_mexe_no_timer(db, content, make_user):
+    user = make_user("Mantem")
     start = _at(2026, 3, 10)
     with _clock(start):
         refill_drawer(db, user)
     with _clock(start + REFILL):
         refill_drawer(db, user)
-    # Ficar dias com a gaveta cheia não adianta nada: a contagem recomeça ao abrir.
-    opened = start + timedelta(days=5)
-    with _clock(opened):
+    # Gaveta cheia: o ciclo continua, então abrir no meio dele aproveita o tempo já corrido.
+    with _clock(start + REFILL + timedelta(hours=11)):
         _open_daily(db, user)
-    assert user.next_pack_at == opened + REFILL
-    with _clock(opened + REFILL - timedelta(seconds=1)):
-        assert refill_drawer(db, user) == 0
+    assert user.next_pack_at == start + 2 * REFILL
+    with _clock(start + 2 * REFILL):
+        assert refill_drawer(db, user) == 1
+
+
+def test_ciclo_com_a_gaveta_cheia_nao_entrega_e_mantem_o_ritmo(db, make_user):
+    user = make_user("Ritmo")
+    start = _at(2026, 3, 10)
+    with _clock(start):
+        refill_drawer(db, user)
+    with _clock(start + 5 * REFILL + timedelta(hours=1)):
+        assert refill_drawer(db, user) == 1
+    assert _daily_stock(db, user) == 3
+    assert user.next_pack_at == start + 6 * REFILL
 
 
 def test_com_mais_de_um_espaco_o_timer_emenda(db, content, make_user):
@@ -154,7 +164,7 @@ def test_tempo_fora_do_app_conta_ate_encher(db, content, make_user):
     with _clock(start + timedelta(days=30)):
         assert refill_drawer(db, user) == 3
     assert _daily_stock(db, user) == 3
-    assert user.next_pack_at is None
+    assert user.next_pack_at > start + timedelta(days=30)
 
 
 def test_gaveta_nao_conta_pacotes_de_codigo(db, make_user):

@@ -91,9 +91,9 @@ def _deliver(db: Session, user: User, today: date) -> None:
 
 
 def _settle_drawer(db: Session, user: User) -> int:
-    """Acerta a gaveta de um usuário já travado. O timer só corre com espaço livre:
-    para quando a gaveta enche e recomeça do zero quando um pacote é aberto. O tempo
-    fora do app conta, até encher a gaveta. Pacotes de código ficam fora dela."""
+    """Acerta a gaveta de um usuário já travado. O timer é um ciclo único que nunca
+    para: abrir pacote não mexe nele, e o ciclo que termina com a gaveta cheia não
+    entrega nada. O tempo fora do app conta. Pacotes de código ficam fora da gaveta."""
     current = now()
     today = today_local(db)
     cap = int(cfg(db, "daily.stock_cap"))
@@ -111,14 +111,14 @@ def _settle_drawer(db: Session, user: User) -> int:
             delivered += 1
         user.last_daily_grant_on = today
 
-    if stock + delivered < cap and user.next_pack_at is None:
+    if user.next_pack_at is None:
         user.next_pack_at = current + interval
     while stock + delivered < cap and user.next_pack_at <= current:
         _deliver(db, user, today)
         delivered += 1
         user.next_pack_at += interval
-    if stock + delivered >= cap:
-        user.next_pack_at = None
+    if user.next_pack_at <= current:
+        user.next_pack_at += ((current - user.next_pack_at) // interval + 1) * interval
     return delivered
 
 

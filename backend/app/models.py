@@ -42,7 +42,7 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(30))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     last_daily_grant_on: Mapped[date | None] = mapped_column(Date)
-    next_pack_at: Mapped[datetime | None] = mapped_column(Timestamp)  # nulo: gaveta cheia, timer parado
+    next_pack_at: Mapped[datetime | None] = mapped_column(Timestamp)  # fim do ciclo atual; nulo só antes do primeiro acerto
     created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
 
     __table_args__ = (Index("uq_user_nickname_ci", func.lower(nickname), unique=True),)

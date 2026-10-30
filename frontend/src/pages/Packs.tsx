@@ -125,7 +125,8 @@ function Opener({ grant, onClose, onNext }: { grant: GrantView; onClose: () => v
         </div>
         <div className="opener-actions">
           <Link className="btn btn-primary" to="/">Colar no álbum</Link>
-          {onNext ? <button className="btn" onClick={onNext}>Abrir outro</button> : <button className="btn" onClick={onClose}>Fechar</button>}
+          {onNext ? <button className="btn" onClick={onNext}>Abrir outro</button> : null}
+          <button className="btn btn-ghost" onClick={onClose}>Fechar</button>
         </div>
       </div>
     );
@@ -144,7 +145,10 @@ function Opener({ grant, onClose, onNext }: { grant: GrantView; onClose: () => v
         <p className="reveal-meta" style={{ color: item.rarity.rank >= 2 ? item.rarity.color : undefined }}>
           {item.rarity.name} · {item.org_name}
         </p>
-        <button className="btn btn-ghost">Próxima</button>
+        <div className="opener-actions">
+          <button className="btn btn-ghost">Próxima</button>
+          <button className="btn btn-ghost" onClick={(event) => { event.stopPropagation(); onClose(); }}>Fechar</button>
+        </div>
       </div>
     );
   }
@@ -217,7 +221,7 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
         </ul>
         <p className="drawer-note">
           {empty === 0
-            ? 'Gaveta cheia: abra um pacote para o timer voltar a contar.'
+            ? `Gaveta cheia. Próximo pacote em ${left === null ? '…' : formatCountdown(left)}, se abrir espaço até lá.`
             : empty > 1
               ? 'Cada pacote entregue já começa a contagem do próximo.'
               : 'Quando este chegar, a gaveta fica cheia.'}

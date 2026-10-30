@@ -71,7 +71,7 @@ Seguimos [Conventional Commits](https://www.conventionalcommits.org/pt-br/): `ti
 
 ## Diferenças em relação ao modelo de dados da seção 6
 
-- `user.next_pack_at`: quando sai o próximo pacote da gaveta; nulo com a gaveta cheia.
+- `user.next_pack_at`: fim do ciclo atual do timer da gaveta, que nunca para.
 - `user.last_daily_grant_on`: dia da última entrega, usado no premium e nos pacotes de boas-vindas.
 - `user_session`, `email_token`, `rate_limit_event`: tabelas de sessão, links de e-mail e limite de tentativas.
 - `rarity.rank`: ordena raridades para a garantia mínima.
