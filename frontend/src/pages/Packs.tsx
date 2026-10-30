@@ -10,6 +10,43 @@ interface Stock {
   stock: GrantView[];
   daily_cap: number;
   daily_in_stock: number;
+  next_pack_at: string | null;
+  server_now: string;
+  refill_minutes: number;
+  dev_tools: boolean;
+}
+
+function formatCountdown(ms: number) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`;
+}
+
+// Conta pelo relógio do servidor, para não depender da hora certa no celular.
+function useCountdown(data: Stock | null, onDone: () => void) {
+  const [left, setLeft] = useState<number | null>(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    if (!data?.next_pack_at) {
+      setLeft(null);
+      return;
+    }
+    const target = Date.parse(data.next_pack_at) - (Date.parse(data.server_now) - Date.now());
+    let fired = false;
+    const tick = () => {
+      const ms = target - Date.now();
+      setLeft(ms);
+      if (ms <= 0 && !fired) {
+        fired = true;
+        done.current();
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [data?.next_pack_at, data?.server_now]);
+  return left;
 }
 
 function Wrapper({ grant }: { grant: GrantView }) {
@@ -137,8 +174,106 @@ function announce(item?: Drawn) {
   if (item && item.rarity.rank >= 2) buzz(item.rarity.rank >= 3 ? [40, 40, 80] : 50);
 }
 
-function RedeemForm({ onRedeemed, disabled }: { onRedeemed: () => void; disabled: boolean }) {
-  const [code, setCode] = useState('');
+function PackTile({ grant, disabled, onOpen }: { grant: GrantView; disabled: boolean; onOpen: (grant: GrantView) => void }) {
+  return (
+    <button className="pack-tile" disabled={disabled} aria-label={`Abrir ${grant.name}`} onClick={() => onOpen(grant)}>
+      <Wrapper grant={grant} />
+      {grant.source === 'code' ? <span className="pack-tag">Código</span> : null}
+    </button>
+  );
+}
+
+function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | null; disabled: boolean; onOpen: (grant: GrantView) => void }) {
+  const ready = data.stock.filter((g) => g.source === 'daily').slice(0, data.daily_cap);
+  const extras = data.stock.filter((g) => !ready.includes(g));
+  const empty = Math.max(0, data.daily_cap - ready.length);
+  const total = data.refill_minutes * 60000;
+  const progress = left === null ? 0 : Math.min(100, Math.max(0, 100 - (left / total) * 100));
+  const count = data.stock.length;
+  return (
+    <>
+      <section className="ready-head">
+        <h2>{count ? `${count} ${count === 1 ? 'pacote pronto' : 'pacotes prontos'}` : 'Nenhum pacote pronto'}</h2>
+        <p>{count ? 'Toque em um pacote para abrir.' : 'O próximo já está a caminho.'}</p>
+      </section>
+      <section className="drawer" aria-label="Gaveta de pacotes">
+        <ul className="drawer-slots">
+          {ready.map((grant) => (
+            <li key={grant.id}><PackTile grant={grant} disabled={disabled} onOpen={onOpen} /></li>
+          ))}
+          {Array.from({ length: empty }, (_, i) => (
+            <li key={`empty-${i}`} className={`drawer-empty${i === 0 && left !== null ? ' drawer-next' : ''}`}>
+              {i === 0 && left !== null ? (
+                <>
+                  <small>Chega em</small>
+                  <strong className="drawer-time" role="timer">{formatCountdown(left)}</strong>
+                  <span className="drawer-bar"><span style={{ width: `${progress}%` }} /></span>
+                </>
+              ) : (
+                <small>Espaço livre</small>
+              )}
+            </li>
+          ))}
+        </ul>
+        <p className="drawer-note">
+          {empty === 0
+            ? 'Gaveta cheia: abra um pacote para o timer voltar a contar.'
+            : empty > 1
+              ? 'Cada pacote entregue já começa a contagem do próximo.'
+              : 'Quando este chegar, a gaveta fica cheia.'}
+        </p>
+      </section>
+      {extras.length ? (
+        <section>
+          <h2 className="extras-title">Extras</h2>
+          <ul className="pack-grid">
+            {extras.map((grant) => (
+              <li key={grant.id}><PackTile grant={grant} disabled={disabled} onOpen={onOpen} /></li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+// Temporário: atalhos de teste, some junto com app/api/dev.py.
+function DevTools({ onChanged, onCode }: { onChanged: () => void; onCode: (code: string) => void }) {
+  const [state, setState] = useState<{ ok?: string; error?: string }>({});
+  const run = async (action: () => Promise<string>) => {
+    setState({});
+    try {
+      setState({ ok: await action() });
+      onChanged();
+    } catch (err) {
+      setState({ error: (err as Error).message });
+    }
+  };
+  const addPack = (slug: string) => run(async () => {
+    await post('/dev/packs', { slug });
+    return 'Pacote adicionado.';
+  });
+  const makeCode = (slug: string) => run(async () => {
+    const { code } = await post<{ code: string }>('/dev/codes', { slug });
+    onCode(code);
+    return `Código ${code} preenchido no campo abaixo.`;
+  });
+  return (
+    <section className="panel dev-tools">
+      <h2>Testes (temporário)</h2>
+      <div className="dev-actions">
+        <button className="btn" onClick={() => addPack('comum')}>+ Pacote comum</button>
+        <button className="btn" onClick={() => addPack('premium')}>+ Pacote premium</button>
+        <button className="btn" onClick={() => makeCode('comum')}>Gerar código comum</button>
+        <button className="btn" onClick={() => makeCode('premium')}>Gerar código premium</button>
+      </div>
+      {state.ok ? <Message kind="ok">{state.ok}</Message> : null}
+      {state.error ? <Message>{state.error}</Message> : null}
+    </section>
+  );
+}
+
+function RedeemForm({ onRedeemed, disabled, code, setCode }: { onRedeemed: () => void; disabled: boolean; code: string; setCode: (code: string) => void }) {
   const [state, setState] = useState<{ ok?: string; error?: string }>({});
   const [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => {
@@ -185,6 +320,7 @@ export function PacksPage() {
   const [data, setData] = useState<Stock | null>(null);
   const [opening, setOpening] = useState<GrantView | null>(null);
   const [error, setError] = useState('');
+  const [code, setCode] = useState('');
 
   const load = useCallback(async () => {
     const result = await api<Stock>('/packs');
@@ -197,10 +333,15 @@ export function PacksPage() {
     load().catch((err) => setError(err.message));
   }, [load]);
 
+  const reload = useCallback(() => {
+    load().catch(() => {});
+  }, [load]);
+  const left = useCountdown(data, reload);
+
   const remaining = data?.stock.filter((g) => g.id !== opening?.id) ?? [];
   const close = () => {
     setOpening(null);
-    load().catch(() => {});
+    reload();
   };
 
   return (
@@ -210,32 +351,11 @@ export function PacksPage() {
       <Message>{error}</Message>
       {data ? (
         <>
-          {data.stock.length ? (
-            <ul className="pack-grid">
-              {data.stock.map((grant) => (
-                <li key={grant.id}>
-                  <button
-                    className="pack-tile"
-                    disabled={!user?.verified}
-                    aria-label={`Abrir ${grant.name}`}
-                    onClick={() => setOpening(grant)}
-                  >
-                    <Wrapper grant={grant} />
-                    {grant.source === 'code' ? <span className="pack-tag">Código</span> : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <section className="panel paper empty">
-              <h2>Sem pacotes agora</h2>
-              <p className="muted">Novos pacotes chegam depois da meia-noite. Enquanto isso, procure códigos pelo campus ou troque repetidas.</p>
-            </section>
-          )}
-          <p className="muted stock-note">Estoque diário: {data.daily_in_stock} de {data.daily_cap}. Acima do limite, o pacote do dia se perde.</p>
+          <Drawer data={data} left={left} disabled={!user?.verified} onOpen={setOpening} />
+          {data.dev_tools && user?.verified ? <DevTools onChanged={reload} onCode={setCode} /> : null}
         </>
       ) : null}
-      <RedeemForm onRedeemed={() => load().catch(() => {})} disabled={!user?.verified} />
+      <RedeemForm onRedeemed={reload} disabled={!user?.verified} code={code} setCode={setCode} />
       {opening ? (
         <Opener
           key={opening.id}

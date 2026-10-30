@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
-from app.api import admin, auth, game, trades
+from app.api import admin, auth, dev, game, trades
 from app.db import SessionLocal
 from app.services.core import purge_rate_events
 from app.services.mail import dev_outbox
@@ -91,6 +91,8 @@ api.include_router(trades.router)
 api.include_router(admin.router)
 
 if not settings.is_prod:
+
+    api.include_router(dev.router)
 
     @api.get("/dev/mailbox", tags=["dev"])
     def mailbox():

@@ -15,7 +15,7 @@ from app.db import get_db
 from app.models import EmailToken, User, UserSession
 from app.services.core import audit, enforce_rate, now
 from app.services.mail import send_mail
-from app.services.packs import grant_daily_if_due
+from app.services.packs import refill_drawer
 from app.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -213,5 +213,5 @@ me_router = APIRouter(tags=["auth"])
 
 @me_router.get("/me")
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    grant_daily_if_due(db, user)
+    refill_drawer(db, user)
     return user_view(user)

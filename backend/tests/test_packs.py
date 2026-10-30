@@ -1,17 +1,18 @@
 import random
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 
-from app.models import AuditLog, Config, PackGrant, PackOpeningItem, PackType, Rarity, Sticker, UserSticker
+from app.models import Config, PackGrant, PackOpeningItem, PackType, Rarity, Sticker, UserSticker
 from app.services import packs
-from app.services.packs import draw_stickers, grant_daily_if_due
+from app.services.packs import draw_stickers, refill_drawer
 
 SP = ZoneInfo("America/Sao_Paulo")
+REFILL = timedelta(hours=12)
 
 
 def _pack(db, slug):
@@ -74,42 +75,103 @@ def _daily_stock(db, user):
     )
 
 
-def test_concessao_uma_vez_por_dia_e_virada_em_sao_paulo(db, make_user):
-    user = make_user("Dia")
-    with patch.object(packs, "now", lambda: _at(2026, 3, 10, 23)):
-        assert grant_daily_if_due(db, user) == 2
-        assert grant_daily_if_due(db, user) == 0
-    # 23h59 em São Paulo já é dia seguinte em UTC, mas não é virada para o jogo.
-    with patch.object(packs, "now", lambda: datetime(2026, 3, 11, 2, 59, tzinfo=ZoneInfo("UTC"))):
-        assert grant_daily_if_due(db, user) == 0
-    with patch.object(packs, "now", lambda: datetime(2026, 3, 11, 3, 1, tzinfo=ZoneInfo("UTC"))):
-        assert grant_daily_if_due(db, user) == 2
+def _clock(moment):
+    return patch.object(packs, "now", lambda: moment)
 
 
-def test_teto_descarta_o_excedente(db, make_user):
-    user = make_user("Teto")
-    for day in (1, 2, 3, 4):
-        with patch.object(packs, "now", lambda d=day: _at(2026, 3, d)):
-            grant_daily_if_due(db, user)
-    assert _daily_stock(db, user) == 4
-    assert db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action == "pack.daily_discarded")) == 2
+def test_conta_nova_recebe_boas_vindas_e_o_timer_comeca(db, make_user):
+    user = make_user("Nova")
+    start = _at(2026, 3, 10)
+    with _clock(start):
+        assert refill_drawer(db, user) == 2
+        assert refill_drawer(db, user) == 0
+    assert user.next_pack_at == start + REFILL
 
 
-def test_teto_nao_conta_pacotes_de_codigo(db, make_user):
+def test_conta_nao_confirmada_nao_recebe(db, make_user):
+    user = make_user("Sem", verified=False)
+    assert refill_drawer(db, user) == 0
+    assert user.next_pack_at is None
+
+
+def test_entrega_quando_o_timer_acaba_e_para_com_a_gaveta_cheia(db, make_user):
+    user = make_user("Timer")
+    start = _at(2026, 3, 10)
+    with _clock(start):
+        refill_drawer(db, user)
+    with _clock(start + REFILL - timedelta(seconds=1)):
+        assert refill_drawer(db, user) == 0
+    with _clock(start + REFILL):
+        assert refill_drawer(db, user) == 1
+    assert _daily_stock(db, user) == 3
+    assert user.next_pack_at is None
+
+
+def _open_daily(db, user):
+    grant = db.scalar(
+        select(PackGrant).where(PackGrant.user_id == user.id, PackGrant.source == "daily", PackGrant.opened_at.is_(None))
+    )
+    packs.open_pack(db, user, grant.id)
+    db.commit()
+
+
+def test_abrir_com_a_gaveta_cheia_reinicia_o_timer(db, content, make_user):
+    user = make_user("Reinicia")
+    start = _at(2026, 3, 10)
+    with _clock(start):
+        refill_drawer(db, user)
+    with _clock(start + REFILL):
+        refill_drawer(db, user)
+    # Ficar dias com a gaveta cheia não adianta nada: a contagem recomeça ao abrir.
+    opened = start + timedelta(days=5)
+    with _clock(opened):
+        _open_daily(db, user)
+    assert user.next_pack_at == opened + REFILL
+    with _clock(opened + REFILL - timedelta(seconds=1)):
+        assert refill_drawer(db, user) == 0
+
+
+def test_com_mais_de_um_espaco_o_timer_emenda(db, content, make_user):
+    user = make_user("Emenda")
+    start = _at(2026, 3, 10)
+    with _clock(start):
+        refill_drawer(db, user)
+        _open_daily(db, user)
+        _open_daily(db, user)
+    assert _daily_stock(db, user) == 0
+    with _clock(start + REFILL):
+        assert refill_drawer(db, user) == 1
+    assert user.next_pack_at == start + 2 * REFILL
+
+
+def test_tempo_fora_do_app_conta_ate_encher(db, content, make_user):
+    user = make_user("Fora")
+    start = _at(2026, 3, 10)
+    with _clock(start):
+        refill_drawer(db, user)
+        _open_daily(db, user)
+        _open_daily(db, user)
+    with _clock(start + timedelta(days=30)):
+        assert refill_drawer(db, user) == 3
+    assert _daily_stock(db, user) == 3
+    assert user.next_pack_at is None
+
+
+def test_gaveta_nao_conta_pacotes_de_codigo(db, make_user):
     user = make_user("Cod")
     premium = _pack(db, "premium")
     for _ in range(5):
         packs.grant_pack(db, user.id, premium.id, "code", "x")
     db.commit()
-    with patch.object(packs, "now", lambda: _at(2026, 3, 1)):
-        assert grant_daily_if_due(db, user) == 2
+    with _clock(_at(2026, 3, 1)):
+        assert refill_drawer(db, user) == 2
 
 
 def test_premium_em_dias_alternados(db, make_user):
     def premium_on(day: date, nickname: str) -> int:
         user = make_user(nickname)
-        with patch.object(packs, "now", lambda: datetime(day.year, day.month, day.day, 12, tzinfo=SP)):
-            grant_daily_if_due(db, user)
+        with _clock(datetime(day.year, day.month, day.day, 12, tzinfo=SP)):
+            refill_drawer(db, user)
         rows = db.scalars(select(PackGrant).where(PackGrant.user_id == user.id)).all()
         return sum(row.pack_type.slug == "premium" for row in rows)
 
@@ -117,14 +179,38 @@ def test_premium_em_dias_alternados(db, make_user):
 
 
 def test_mudanca_de_config_vale_sem_codigo(db, make_user):
-    db.get(Config, "daily.pack_count").value = 3
+    db.get(Config, "daily.welcome_packs").value = 3
     db.commit()
     try:
-        with patch.object(packs, "now", lambda: _at(2026, 3, 1)):
-            assert grant_daily_if_due(db, make_user("Cfg")) == 3
+        with _clock(_at(2026, 3, 1)):
+            assert refill_drawer(db, make_user("Cfg")) == 3
     finally:
-        db.get(Config, "daily.pack_count").value = 2
+        db.get(Config, "daily.welcome_packs").value = 2
         db.commit()
+
+
+def test_rota_informa_o_timer(db, make_user, login):
+    body = login(make_user("Rota")).get("/api/packs").json()
+    assert body["daily_cap"] == 3
+    assert body["daily_in_stock"] == 2
+    assert body["next_pack_at"] > body["server_now"]
+
+
+def test_atalhos_de_teste(db, make_user, login):
+    user = make_user("Dev")
+    client = login(user)
+    assert client.post("/api/dev/packs", json={"slug": "premium"}).status_code == 201
+    code = client.post("/api/dev/codes", json={"slug": "comum"}).json()["code"]
+    assert client.post("/api/codes/redeem", json={"code": code}).status_code == 200
+    body = client.get("/api/packs").json()
+    assert body["dev_tools"] is True
+    assert sorted(g["source"] for g in body["stock"]) == ["admin", "code", "daily", "daily"]
+    assert client.post("/api/dev/packs", json={"slug": "nao-existe"}).status_code == 404
+
+
+def test_atalhos_de_teste_exigem_conta_confirmada(db, make_user, login):
+    client = login(make_user("Pendente", verified=False))
+    assert client.post("/api/dev/packs", json={"slug": "comum"}).status_code == 403
 
 
 def test_abertura_nova_e_repetida(db, content, make_user, login):

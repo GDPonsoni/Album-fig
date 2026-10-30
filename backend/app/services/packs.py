@@ -1,6 +1,6 @@
 import random
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -78,49 +78,62 @@ def grant_pack(db: Session, user_id: int, pack_type_id: int, source: str, source
     return grant
 
 
-def grant_daily_if_due(db: Session, user: User) -> int:
-    """Concede os pacotes do dia no primeiro acesso depois da virada. Não acumula
-    dias sem acesso. O que passa do teto do estoque diário é descartado."""
-    if user.email_verified_at is None:
-        return 0
-    today = today_local(db)
-    if user.last_daily_grant_on == today:
-        return 0
-
-    locked = lock_user(db, user.id)
-    if locked.last_daily_grant_on == today:
-        db.commit()
-        return 0
-
-    count: int = cfg(db, "daily.pack_count")
-    common = db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.common_pack_slug")))
-    premium = db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.premium_pack_slug")))
+def _deliver(db: Session, user: User, today: date) -> None:
+    # Nos dias de premium, o primeiro pacote entregue no dia é o premium.
     every: int = cfg(db, "daily.premium_every_n_days")
+    premium = db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.premium_pack_slug")))
+    if premium is not None and every > 0 and today.toordinal() % every == 0 and user.last_daily_grant_on != today:
+        pack_type = premium
+    else:
+        pack_type = db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.common_pack_slug")))
+    grant_pack(db, user.id, pack_type.id, "daily", today.isoformat())
+    user.last_daily_grant_on = today
 
-    # Premium primeiro: se o teto cortar algo, o jogador fica com o pacote melhor.
-    plan: list[PackType] = [common] * count
-    if premium is not None and every > 0 and count > 0 and today.toordinal() % every == 0:
-        plan[0] = premium
 
+def _settle_drawer(db: Session, user: User) -> int:
+    """Acerta a gaveta de um usuário já travado. O timer só corre com espaço livre:
+    para quando a gaveta enche e recomeça do zero quando um pacote é aberto. O tempo
+    fora do app conta, até encher a gaveta. Pacotes de código ficam fora dela."""
+    current = now()
+    today = today_local(db)
+    cap = int(cfg(db, "daily.stock_cap"))
+    interval = timedelta(minutes=max(1, int(cfg(db, "daily.refill_minutes"))))
     stock = db.scalar(
         select(func.count())
         .select_from(PackGrant)
         .where(PackGrant.user_id == user.id, PackGrant.source == "daily", PackGrant.opened_at.is_(None))
     ) or 0
-    room = max(0, int(cfg(db, "daily.stock_cap")) - stock)
-    for pack_type in plan[:room]:
-        grant_pack(db, user.id, pack_type.id, "daily", today.isoformat())
-    discarded = len(plan) - min(room, len(plan))
-    if discarded:
-        audit(db, user.id, "pack.daily_discarded", count=discarded, day=today.isoformat())
+    delivered = 0
 
-    locked.last_daily_grant_on = today
+    if user.last_daily_grant_on is None:
+        for _ in range(min(int(cfg(db, "daily.welcome_packs")), max(0, cap - stock))):
+            _deliver(db, user, today)
+            delivered += 1
+        user.last_daily_grant_on = today
+
+    if stock + delivered < cap and user.next_pack_at is None:
+        user.next_pack_at = current + interval
+    while stock + delivered < cap and user.next_pack_at <= current:
+        _deliver(db, user, today)
+        delivered += 1
+        user.next_pack_at += interval
+    if stock + delivered >= cap:
+        user.next_pack_at = None
+    return delivered
+
+
+def refill_drawer(db: Session, user: User) -> int:
+    if user.email_verified_at is None:
+        return 0
+    if user.last_daily_grant_on is not None and user.next_pack_at is not None and user.next_pack_at > now():
+        return 0
+    delivered = _settle_drawer(db, lock_user(db, user.id))
     db.commit()
-    return min(room, len(plan))
+    return delivered
 
 
 def open_pack(db: Session, user: User, grant_id: int) -> tuple[PackGrant, list[tuple[Sticker, bool]]]:
-    lock_user(db, user.id)
+    locked = lock_user(db, user.id)
     grant = db.scalar(
         select(PackGrant).where(PackGrant.id == grant_id, PackGrant.user_id == user.id).with_for_update(of=PackGrant)
     )
@@ -152,6 +165,7 @@ def open_pack(db: Session, user: User, grant_id: int) -> tuple[PackGrant, list[t
 
     grant.opened_at = now()
     audit(db, user.id, "pack.open", grant_id=grant.id, stickers=[s.id for s in drawn])
+    _settle_drawer(db, locked)
     return grant, result
 
 

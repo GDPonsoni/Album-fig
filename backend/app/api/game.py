@@ -7,7 +7,8 @@ from app.api.deps import current_user, verified_user
 from app.db import get_db
 from app.models import PackGrant, User
 from app.services import album, codes, packs
-from app.services.core import cfg
+from app.services.core import cfg, now
+from app.settings import settings
 
 router = APIRouter(tags=["game"])
 
@@ -56,7 +57,7 @@ def _grant_view(grant: PackGrant) -> dict:
 
 @router.get("/packs")
 def stock(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    packs.grant_daily_if_due(db, user)
+    packs.refill_drawer(db, user)
     grants = db.scalars(
         select(PackGrant).where(PackGrant.user_id == user.id, PackGrant.opened_at.is_(None)).order_by(PackGrant.id)
     ).all()
@@ -64,6 +65,10 @@ def stock(user: User = Depends(current_user), db: Session = Depends(get_db)):
         "stock": [_grant_view(g) for g in grants],
         "daily_cap": cfg(db, "daily.stock_cap"),
         "daily_in_stock": sum(g.source == "daily" for g in grants),
+        "next_pack_at": user.next_pack_at,
+        "server_now": now(),
+        "refill_minutes": cfg(db, "daily.refill_minutes"),
+        "dev_tools": not settings.is_prod,
     }
 
 

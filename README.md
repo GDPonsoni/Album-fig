@@ -65,9 +65,14 @@ Crie orgs, figurinhas e mosaicos em `/admin`. Em **Orgs → Mosaico**, a imagem 
 
 Pesos, quantidades, tetos, tempos e limites ficam na aba **Parâmetros** e nos tipos de pacote, e valem na hora.
 
+## Commits
+
+Seguimos [Conventional Commits](https://www.conventionalcommits.org/pt-br/): `tipo(escopo): descrição`, com tipos como `feat`, `fix`, `docs`, `test`, `refactor` e `chore`.
+
 ## Diferenças em relação ao modelo de dados da seção 6
 
-- `user.last_daily_grant_on`: controla a concessão diária.
+- `user.next_pack_at`: quando sai o próximo pacote da gaveta; nulo com a gaveta cheia.
+- `user.last_daily_grant_on`: dia da última entrega, usado no premium e nos pacotes de boas-vindas.
 - `user_session`, `email_token`, `rate_limit_event`: tabelas de sessão, links de e-mail e limite de tentativas.
 - `rarity.rank`: ordena raridades para a garantia mínima.
 - `pack_type.slug`: referência estável usada nos parâmetros.

@@ -394,7 +394,27 @@ button:disabled { cursor: default; }
 .foil-brand { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.9; }
 .foil strong { font: 400 1.65rem/1.1 var(--display); text-transform: capitalize; text-shadow: 0 2px 0 rgb(0 0 0 / 0.25); }
 .foil small { font-weight: 600; }
-.stock-note { color: #c3cbdc; }
+.ready-head { color: #fff; margin-bottom: 12px; }
+.ready-head h2 { font: 400 1.5rem/1.15 var(--display); color: var(--gold); }
+.ready-head p { color: #c3cbdc; }
+.drawer { padding: 12px 12px 10px; border-radius: var(--radius); background: var(--navy-deep); box-shadow: inset 0 3px 10px rgb(0 0 0 / 0.45); margin-bottom: 18px; }
+.drawer-slots { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.drawer-slots > li { min-width: 0; aspect-ratio: 3 / 4; }
+.drawer .foil { --tooth: 5px; padding: 8px 4px; }
+.drawer .foil-brand { font-size: 0.5rem; letter-spacing: 0.04em; }
+.drawer .foil strong { font-size: clamp(0.82rem, 4.2vw, 1.3rem); }
+.drawer .foil small { font-size: 0.68rem; }
+.drawer-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; border: 2px dashed #46557a; border-radius: 10px; color: #aab4ca; text-align: center; }
+.drawer-empty small { font-size: 0.74rem; font-weight: 600; }
+.drawer-next { border-color: var(--gold); color: #fff; }
+.drawer-time { font-size: clamp(0.92rem, 4.6vw, 1.25rem); font-weight: 800; font-variant-numeric: tabular-nums; }
+.drawer-bar { width: 85%; height: 5px; border-radius: 3px; background: #33405f; overflow: hidden; }
+.drawer-bar span { display: block; height: 100%; background: var(--gold); transition: width 1s linear; }
+.drawer-note { margin-top: 10px; color: #c3cbdc; font-size: 0.82rem; text-align: center; }
+.extras-title { color: #fff; font: 400 1.1rem/1.2 var(--display); margin-bottom: 10px; }
+.dev-tools { margin-top: 18px; border: 2px dashed var(--gold); background: var(--navy-deep); color: #fff; }
+.dev-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.dev-actions .btn { font-size: 0.85rem; }
 .code-form { display: flex; gap: 8px; }
 .code-form input { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: 15px; letter-spacing: 0.02em; }
 

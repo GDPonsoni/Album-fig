@@ -75,6 +75,8 @@ step('cadastro e confirmação por e-mail');
 await shot(ana, '02-capa');
 await ana.getByRole('link', { name: /Pacotes/ }).click();
 await ana.getByRole('button', { name: /^Abrir Pacote/ }).first().waitFor();
+await ana.getByRole('heading', { name: '2 pacotes prontos' }).waitFor();
+await ana.getByRole('timer').waitFor();
 await shot(ana, '02b-pacotes');
 await openPack(ana);
 step('pacote recebido e aberto');
@@ -248,6 +250,18 @@ await eve.getByRole('button', { name: 'Resgatar' }).click();
 await eve.getByText('Código inválido').waitFor();
 await shot(eve, '15-codigo');
 step('código inválido recebe erro genérico');
+
+// ---- Gaveta e atalhos de teste
+const prontos = () => eve.locator('.ready-head h2').innerText();
+const antes = parseInt(await prontos(), 10) || 0;
+await eve.getByRole('button', { name: '+ Pacote premium' }).click();
+await eve.getByRole('heading', { name: `${antes + 1} ` }).waitFor();
+await eve.getByRole('button', { name: 'Gerar código comum' }).click();
+await eve.getByText('preenchido no campo').waitFor();
+await eve.getByRole('button', { name: 'Resgatar' }).click();
+await eve.getByRole('heading', { name: `${antes + 2} ` }).waitFor();
+await shot(eve, '15b-gaveta-extras');
+step('atalhos de teste geram pacote e código');
 
 // ---- Admin
 const admin = await phone();
