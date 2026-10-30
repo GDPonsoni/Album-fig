@@ -170,4 +170,4 @@ def duplicates(db: Session, user: User) -> list[dict]:
     """Repetidas: tudo além do exemplar que fica reservado para o álbum."""
     rows = [row for row in _inventory(db, user).values() if row.quantity > 1 and row.sticker.active]
     rows.sort(key=lambda r: r.sticker.number)
-    return [{**sticker_card(r.sticker), "available": r.quantity - 1} for r in rows]
+    return [{**sticker_card(r.sticker), "available": r.quantity - 1, "pasted": r.pasted} for r in rows]

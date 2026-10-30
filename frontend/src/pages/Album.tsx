@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, post, type AlbumIndex, type Card, type PageDetail, type PageMeta, type Slot } from '../api';
 import { useAuth } from '../auth';
+import { StickerSheet } from '../components/StickerSheet';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { lowFx, buzz } from '../fx';
 
@@ -175,42 +176,6 @@ function TrayRow({ children }: { children: React.ReactNode }) {
       </div>
       {edges.start ? <button className="tray-arrow tray-arrow-start" aria-label="Figurinhas anteriores" onClick={() => scrollBy(-1)}>‹</button> : null}
       {edges.end ? <button className="tray-arrow tray-arrow-end" aria-label="Mais figurinhas" onClick={() => scrollBy(1)}>›</button> : null}
-    </div>
-  );
-}
-
-function BackSheet({ card, onClose }: { card: Card; onClose: () => void }) {
-  const [back, setBack] = useState<{ back_text: string; back_links: { label: string; url: string }[] } | null>(null);
-  const [flipped, setFlipped] = useState(false);
-  useEffect(() => {
-    api(`/stickers/${card.id}/back`).then(setBack).catch(onClose);
-  }, [card.id, onClose]);
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div
-        className={`flip${flipped ? ' flipped' : ''}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          setFlipped((value) => !value);
-        }}
-      >
-        <div className="flip-face"><StickerArt card={card} /></div>
-        <div className="flip-face flip-back paper">
-          <p className="flip-org" style={{ color: card.org_color }}>{card.org_name}</p>
-          <h3>{card.name}</h3>
-          <p className="flip-rarity" style={{ color: card.rarity.color }}>#{card.number} · {card.rarity.name} · {card.tag}</p>
-          <p>{back?.back_text}</p>
-          <div className="flip-links">
-            {back?.back_links.map((link) => (
-              <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>{link.label}</a>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="flip-actions" onClick={(event) => event.stopPropagation()}>
-        <button className="btn btn-primary" onClick={() => setFlipped((value) => !value)}>{flipped ? 'Ver frente' : 'Virar'}</button>
-        <button className="btn btn-ghost" onClick={onClose}>Fechar</button>
-      </div>
     </div>
   );
 }
@@ -446,7 +411,7 @@ export function AlbumPage() {
         )}
       </section>
 
-      {open ? <BackSheet card={open} onClose={closeBack} /> : null}
+      {open ? <StickerSheet card={open} onClose={closeBack} /> : null}
     </div>
   );
 }

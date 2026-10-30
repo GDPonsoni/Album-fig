@@ -37,3 +37,4 @@ def test_repetidas_e_o_que_passa_de_um(content, make_user, give, login):
     give(user, content[2], 2)
     dup = login(user).get("/api/inventory/duplicates").json()
     assert {d["id"]: d["available"] for d in dup} == {content[0].id: 2, content[2].id: 1}
+    assert {d["id"]: d["pasted"] for d in dup} == {content[0].id: True, content[2].id: False}

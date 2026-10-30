@@ -3,13 +3,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api, post, type Card, type TradeView } from '../api';
 import { useAuth } from '../auth';
+import { StickerSheet } from '../components/StickerSheet';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { buzz } from '../fx';
 
-type Duplicate = Card & { available: number };
+type Duplicate = Card & { available: number; pasted: boolean };
 
 function DuplicatesPanel({ dupes }: { dupes: Duplicate[] }) {
   const total = dupes.reduce((sum, item) => sum + item.available, 0);
+  const [open, setOpen] = useState<Duplicate | null>(null);
+  const close = useCallback(() => setOpen(null), []);
   return (
     <section className="panel paper dupes-list">
       <h2>Minhas repetidas{total ? ` (${total})` : ''}</h2>
@@ -17,10 +20,10 @@ function DuplicatesPanel({ dupes }: { dupes: Duplicate[] }) {
         <ul>
           {dupes.map((item) => (
             <li key={item.id}>
-              <div className="dupes-art">
+              <button className="dupes-art" aria-label={`Ver ${item.name}`} onClick={() => setOpen(item)}>
                 <StickerArt card={item} />
                 <b className="qty">×{item.available}</b>
-              </div>
+              </button>
               <span>{item.name}</span>
               <small>{item.org_name}</small>
             </li>
@@ -29,6 +32,7 @@ function DuplicatesPanel({ dupes }: { dupes: Duplicate[] }) {
       ) : (
         <p className="muted">Nenhuma repetida ainda. As que sobrarem dos pacotes aparecem aqui.</p>
       )}
+      {open ? <StickerSheet card={open} pasted={open.pasted} onClose={close} /> : null}
     </section>
   );
 }
