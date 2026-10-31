@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
     r2_bucket: str = ""
-    r2_public_url: str = ""  # endereço público do bucket, sem / no final
 
     @field_validator("database_url")
     @classmethod

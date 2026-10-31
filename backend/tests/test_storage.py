@@ -3,12 +3,12 @@ from unittest.mock import patch
 
 import pytest
 from botocore.exceptions import ClientError
+from fastapi.testclient import TestClient
 from PIL import Image
 
+from app.main import app
 from app.services import images, mail
 from app.settings import Settings, settings
-
-PUBLIC = "https://imagens.example.com"
 
 
 class FakeR2:
@@ -31,18 +31,31 @@ class FakeR2:
 def r2(monkeypatch):
     fake = FakeR2()
     monkeypatch.setattr(settings, "r2_bucket", "album")
-    monkeypatch.setattr(settings, "r2_public_url", PUBLIC)
     monkeypatch.setattr(images, "_r2_client", lambda: fake)
     return fake
 
 
 def test_imagem_vai_para_o_r2_e_volta(r2):
     url = images.save_webp(Image.new("RGB", (40, 40)), "stickers")
-    assert url.startswith(f"{PUBLIC}/stickers/")
-    assert images.read_media(url) == r2.objects[url.removeprefix(f"{PUBLIC}/")]
+    assert url.startswith("/media/stickers/")
+    assert images.read_media(url) == r2.objects[url.removeprefix("/media/")]
     images.remove_media(url)
     assert r2.objects == {}
     assert images.read_media(url) is None
+
+
+def test_imagem_do_r2_so_sai_para_quem_esta_logado(r2, make_user, login):
+    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers")
+    assert TestClient(app).get(url).status_code == 401
+    response = login(make_user("Ana")).get(url)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/webp"
+    assert response.headers["cache-control"].startswith("private")
+    assert response.content == r2.objects[url.removeprefix("/media/")]
+
+
+def test_imagem_inexistente_da_404(r2, make_user, login):
+    assert login(make_user("Ana")).get("/media/stickers/nada.webp").status_code == 404
 
 
 def test_url_externa_nunca_e_tocada(r2):

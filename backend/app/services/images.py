@@ -24,11 +24,10 @@ def _r2_client():
 
 
 def _r2_key(url: str | None) -> str | None:
-    """Só URLs do nosso bucket viram chave: o admin também pode informar imagens externas."""
-    prefix = f"{settings.r2_public_url}/"
-    if not url or not settings.r2_enabled or not url.startswith(prefix):
+    """Só URLs nossas viram chave: o admin também pode informar imagens externas."""
+    if not url or not settings.r2_enabled or not url.startswith("/media/"):
         return None
-    return url.removeprefix(prefix)
+    return url.removeprefix("/media/")
 
 
 def save_webp(image: Image.Image, folder: str = "uploads", max_side: int = 900) -> str:
@@ -48,16 +47,13 @@ def save_webp(image: Image.Image, folder: str = "uploads", max_side: int = 900) 
         image = image.resize((int(image.width * 0.8), int(image.height * 0.8)))
     name = f"{uuid.uuid4().hex}.webp"
     if settings.r2_enabled:
-        key = f"{folder}/{name}"
-        # O nome é único, então a imagem nunca muda e o navegador pode guardá-la.
         _r2_client().put_object(
-            Bucket=settings.r2_bucket, Key=key, Body=data, ContentType="image/webp",
-            CacheControl="public, max-age=31536000, immutable",
+            Bucket=settings.r2_bucket, Key=f"{folder}/{name}", Body=data, ContentType="image/webp",
         )
-        return f"{settings.r2_public_url}/{key}"
-    target = settings.media_dir / folder
-    target.mkdir(parents=True, exist_ok=True)
-    (target / name).write_bytes(data)
+    else:
+        target = settings.media_dir / folder
+        target.mkdir(parents=True, exist_ok=True)
+        (target / name).write_bytes(data)
     return f"/media/{folder}/{name}"
 
 
@@ -85,7 +81,7 @@ def read_media(url: str | None) -> bytes | None:
         except ClientError:
             return None
     path = _local_path(url)
-    return path.read_bytes() if path is not None and path.exists() else None
+    return path.read_bytes() if path is not None and path.is_file() else None
 
 
 def remove_media(url: str | None) -> None:

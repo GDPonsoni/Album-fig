@@ -1,16 +1,18 @@
 import asyncio
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy.exc import IntegrityError
 
 from app.api import admin, auth, dev, game, trades
+from app.api.deps import current_user
 from app.db import SessionLocal
 from app.services.core import purge_rate_events
+from app.services.images import read_media
 from app.services.mail import dev_outbox
 from app.services.trades import expire_due_trades
 from app.settings import settings
@@ -106,8 +108,19 @@ def health():
 
 app.include_router(api)
 
-settings.media_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=settings.media_dir), name="media")
+
+# O bucket é privado: as imagens só saem por aqui, para quem está logado.
+@app.get("/media/{path:path}", include_in_schema=False, dependencies=[Depends(current_user)])
+def media(path: str):
+    data = read_media(f"/media/{path}")
+    if data is None:
+        return JSONResponse({"detail": "Não encontrado."}, status_code=404)
+    return Response(
+        data,
+        media_type=mimetypes.guess_type(path)[0] or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
 
 # Em produção o próprio backend entrega o front compilado (mesma origem).
 if settings.frontend_dist.exists():
