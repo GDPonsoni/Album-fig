@@ -37,7 +37,7 @@ def generate_mosaic(db: Session, org: Org, cols: int, rows: int, rarity_id: int)
                 org_id=org.id,
                 number=number + index,
                 name=f"{org.name}: peça {index + 1} de {cols * rows}",
-                image_url=save_webp(crop, "mosaic", 500),
+                image_url=save_webp(crop, f"orgs/{org.name}/pecas/peca {index + 1:02d}", 500),
                 size="P",
                 rarity_id=rarity_id,
                 tag="mosaico",

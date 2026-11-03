@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from PIL.Image import DecompressionBombError
 from pydantic import AfterValidator, BaseModel, Field, HttpUrl
 from sqlalchemy import case, func, select
@@ -330,7 +330,7 @@ def update_config(key: str, body: ConfigIn, admin: User = Depends(admin_user), d
 
 # ---- Upload ----
 @router.post("/upload")
-async def upload(file: UploadFile):
+async def upload(file: UploadFile, name: Annotated[str, Form(max_length=300)] = "uploads/imagem"):
     data = await file.read(10 * 1024 * 1024 + 1)
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(413, "Imagem maior que 10 MB.")
@@ -338,7 +338,7 @@ async def upload(file: UploadFile):
         image = images.open_upload(data)
     except (ValueError, OSError, DecompressionBombError) as exc:
         raise HTTPException(400, "Envie uma imagem PNG, WebP ou JPEG válida.") from exc
-    return {"url": images.save_webp(image)}
+    return {"url": images.save_webp(image, name)}
 
 
 # ---- Métricas ----

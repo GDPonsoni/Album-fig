@@ -11,9 +11,10 @@ interface FieldDef {
   options?: { value: string | number; label: string }[];
   hint?: string;
   optional?: boolean;
+  uploadName?: (row: Row) => string; // pasta e nome legíveis no bucket
 }
 
-function FieldInput({ field, value, onChange }: { field: FieldDef; value: any; onChange: (v: any) => void }) {
+function FieldInput({ field, value, row = {}, onChange }: { field: FieldDef; value: any; row?: Row; onChange: (v: any) => void }) {
   const [note, setNote] = useState('');
   const type = field.type ?? 'text';
   if (type === 'textarea') return <textarea rows={3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
@@ -31,6 +32,7 @@ function FieldInput({ field, value, onChange }: { field: FieldDef; value: any; o
     const upload = async (file: File) => {
       const form = new FormData();
       form.append('file', file);
+      form.append('name', field.uploadName?.(row) ?? 'uploads/imagem');
       setNote('Enviando…');
       try {
         const result = await api<{ url: string }>('/admin/upload', { form });
@@ -118,7 +120,7 @@ function CrudSection({ title, path, fields, columns, defaults, extraRowAction }:
           {fields.map((field) => (
             <label key={field.key} className="field">
               <span>{field.label}</span>
-              <FieldInput field={field} value={editing[field.key]} onChange={(value) => setEditing({ ...editing, [field.key]: value })} />
+              <FieldInput field={field} value={editing[field.key]} row={editing} onChange={(value) => setEditing({ ...editing, [field.key]: value })} />
               {field.hint ? <small>{field.hint}</small> : null}
             </label>
           ))}
@@ -298,10 +300,10 @@ export default function AdminPage() {
           fields={[
             { key: 'name', label: 'Nome' },
             { key: 'description', label: 'Apresentação', type: 'textarea', optional: true },
-            { key: 'logo_url', label: 'Logo', type: 'image', optional: true },
+            { key: 'logo_url', label: 'Logo', type: 'image', optional: true, uploadName: (row) => `orgs/${row.name || 'sem-nome'}/logo` },
             { key: 'theme_color', label: 'Cor tema', type: 'color' },
             { key: 'sort_order', label: 'Ordem', type: 'number' },
-            { key: 'mosaic_image_url', label: 'Imagem do mosaico', type: 'image', optional: true },
+            { key: 'mosaic_image_url', label: 'Imagem do mosaico', type: 'image', optional: true, uploadName: (row) => `orgs/${row.name || 'sem-nome'}/mosaico` },
           ]}
           extraRowAction={(row) => (
             <button
@@ -333,7 +335,14 @@ export default function AdminPage() {
             { key: 'org_id', label: 'Org', type: 'select', options: orgs },
             { key: 'number', label: 'Número', type: 'number', optional: true, hint: 'Vazio usa o próximo livre.' },
             { key: 'name', label: 'Nome' },
-            { key: 'image_url', label: 'Imagem', type: 'image', optional: true },
+            {
+              key: 'image_url',
+              label: 'Imagem',
+              type: 'image',
+              optional: true,
+              uploadName: (row) =>
+                `orgs/${orgs.find((org) => org.value === row.org_id)?.label ?? 'sem-org'}/figurinhas/${row.number ? String(row.number).padStart(3, '0') : ''} ${row.name ?? ''}`,
+            },
             { key: 'size', label: 'Tamanho (P, M ou G)' },
             { key: 'rarity_id', label: 'Raridade', type: 'select', options: rarities },
             { key: 'tag', label: 'Categoria (membro, pet, gestão…)' },

@@ -73,7 +73,7 @@ cd backend && .venv/bin/alembic upgrade head
 
 ## Conteúdo
 
-Crie orgs, figurinhas e mosaicos em `/admin`. Em **Orgs → Mosaico**, a imagem é cortada nas peças e cada peça vira uma figurinha. Imagens enviadas viram WebP de até 150 KB. O layout da página fica em `slot_layout` (x, y, w, h em %), e apagar uma figurinha a remove de todos os inventários.
+Crie orgs, figurinhas e mosaicos em `/admin`. Em **Orgs → Mosaico**, a imagem é cortada nas peças e cada peça vira uma figurinha. Imagens enviadas viram WebP de até 150 KB, guardadas em `orgs/<org>/logo-…`, `orgs/<org>/mosaico-…`, `orgs/<org>/pecas/peca-01-…` e `orgs/<org>/figurinhas/007-nome-…`. O sufixo aleatório impede adivinhar a URL de figurinhas que o jogador ainda não tem. O layout da página fica em `slot_layout` (x, y, w, h em %), e apagar uma figurinha a remove de todos os inventários.
 
 Pesos, quantidades, tetos, tempos e limites ficam na aba **Parâmetros** e nos tipos de pacote, e valem na hora.
 

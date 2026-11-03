@@ -1,4 +1,5 @@
 import io
+import re
 from unittest.mock import patch
 
 import pytest
@@ -36,7 +37,7 @@ def r2(monkeypatch):
 
 
 def test_imagem_vai_para_o_r2_e_volta(r2):
-    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers")
+    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers/teste")
     assert url.startswith("/media/stickers/")
     assert images.read_media(url) == r2.objects[url.removeprefix("/media/")]
     images.remove_media(url)
@@ -45,13 +46,27 @@ def test_imagem_vai_para_o_r2_e_volta(r2):
 
 
 def test_imagem_do_r2_so_sai_para_quem_esta_logado(r2, make_user, login):
-    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers")
+    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers/teste")
     assert TestClient(app).get(url).status_code == 401
     response = login(make_user("Ana")).get(url)
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/webp"
     assert response.headers["cache-control"].startswith("private")
     assert response.content == r2.objects[url.removeprefix("/media/")]
+
+
+def test_nome_legivel_com_sufixo_imprevisivel(r2):
+    url = images.save_webp(Image.new("RGB", (40, 40)), "orgs/Atlética XV!/figurinhas/007 João Pé")
+    assert re.fullmatch(r"/media/orgs/atletica-xv/figurinhas/007-joao-pe-[0-9a-f]{10}\.webp", url)
+    assert images.media_key("orgs/../  /").startswith("orgs/imagem-")
+
+
+def test_admin_escolhe_o_nome_no_upload(r2, make_user, login):
+    admin = login(make_user("Ana", admin=True))
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 40)).save(buffer, "PNG")
+    response = admin.post("/api/admin/upload", files={"file": ("x.png", buffer.getvalue())}, data={"name": "orgs/Atlética/logo"})
+    assert response.json()["url"].startswith("/media/orgs/atletica/logo-")
 
 
 def test_imagem_inexistente_da_404(r2, make_user, login):
@@ -67,7 +82,7 @@ def test_url_externa_nunca_e_tocada(r2):
 
 def test_sem_r2_continua_no_disco(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "media_dir", tmp_path)
-    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers")
+    url = images.save_webp(Image.new("RGB", (40, 40)), "stickers/teste")
     assert url.startswith("/media/stickers/")
     assert images.read_media(url)
     images.remove_media(url)

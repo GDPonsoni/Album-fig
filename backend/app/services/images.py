@@ -1,5 +1,7 @@
 import io
-import uuid
+import re
+import secrets
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -30,7 +32,20 @@ def _r2_key(url: str | None) -> str | None:
     return url.removeprefix("/media/")
 
 
-def save_webp(image: Image.Image, folder: str = "uploads", max_side: int = 900) -> str:
+def _slug(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")[:40].strip("-")
+
+
+def media_key(name: str) -> str:
+    """"orgs/Atlética/logo" vira "orgs/atletica/logo-<aleatório>.webp". O sufixo
+    impede que um jogador adivinhe a URL de uma figurinha que ainda não tem."""
+    *folders, stem = name.split("/")
+    path = [slug for slug in map(_slug, folders[:4]) if slug] + [_slug(stem) or "imagem"]
+    return "/".join(path) + f"-{secrets.token_hex(5)}.webp"
+
+
+def save_webp(image: Image.Image, name: str = "uploads/imagem", max_side: int = 900) -> str:
     """Grava em WebP abaixo do limite, reduzindo qualidade e depois tamanho."""
     image = image.convert("RGBA")
     image.thumbnail((max_side, max_side))
@@ -45,16 +60,14 @@ def save_webp(image: Image.Image, folder: str = "uploads", max_side: int = 900) 
         if len(data) <= MAX_BYTES:
             break
         image = image.resize((int(image.width * 0.8), int(image.height * 0.8)))
-    name = f"{uuid.uuid4().hex}.webp"
+    key = media_key(name)
     if settings.r2_enabled:
-        _r2_client().put_object(
-            Bucket=settings.r2_bucket, Key=f"{folder}/{name}", Body=data, ContentType="image/webp",
-        )
+        _r2_client().put_object(Bucket=settings.r2_bucket, Key=key, Body=data, ContentType="image/webp")
     else:
-        target = settings.media_dir / folder
-        target.mkdir(parents=True, exist_ok=True)
-        (target / name).write_bytes(data)
-    return f"/media/{folder}/{name}"
+        target = settings.media_dir / key
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    return f"/media/{key}"
 
 
 def open_upload(data: bytes) -> Image.Image:

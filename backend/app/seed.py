@@ -100,8 +100,8 @@ def seed_demo() -> None:
                 description=description,
                 theme_color=color,
                 sort_order=order,
-                logo_url=save_webp(_logo(name, color), "logos", 240),
-                mosaic_image_url=save_webp(_poster(name, color, rng), "posters", 1200),
+                logo_url=save_webp(_logo(name, color), f"orgs/{name}/logo", 240),
+                mosaic_image_url=save_webp(_poster(name, color, rng), f"orgs/{name}/mosaico", 1200),
             )
             db.add(org)
             db.flush()
@@ -115,7 +115,7 @@ def seed_demo() -> None:
                             org_id=org.id,
                             number=number,
                             name=person,
-                            image_url=save_webp(_portrait(person, color, size, rng), "stickers", 640),
+                            image_url=save_webp(_portrait(person, color, size, rng), f"orgs/{name}/figurinhas/{number:03d} {person}", 640),
                             size=size,
                             rarity_id=rarities[rarity].id,
                             tag="gestão" if role == "Gestão" else "membro",
