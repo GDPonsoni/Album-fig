@@ -10,7 +10,6 @@ from app.api.auth import hasher
 from app.db import SessionLocal
 from app.models import AuditLog, RateLimitEvent, Trade, User
 from app.seed import seed_demo
-from app.settings import settings
 
 
 def create_admin(email: str, nickname: str) -> None:
@@ -49,7 +48,7 @@ def purge_campaign() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("seed-demo", help="conteúdo fictício e contas de teste (recusado em produção)")
+    commands.add_parser("seed-demo", help="conteúdo fictício e contas de teste (em produção, sem admin e com senha aleatória)")
     admin = commands.add_parser("create-admin")
     admin.add_argument("email")
     admin.add_argument("nickname")
@@ -58,8 +57,6 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "seed-demo":
-        if settings.is_prod:
-            sys.exit("seed-demo não roda em produção.")
         seed_demo()
     elif args.command == "create-admin":
         create_admin(args.email, args.nickname)

@@ -64,7 +64,7 @@ cd backend && .venv/bin/alembic upgrade head
 
 - **No Render:** crie um Web Service com runtime Docker. O `Dockerfile` compila o front e roda a migração na subida. As variáveis entram pelo painel, em **Add from .env**, e o health check é `/api/health`. Sem shell no plano gratuito, crie o admin rodando `create-admin` localmente com o `DATABASE_URL` da Neon.
 - **`APP_ENV=prod` é obrigatório.** Fora de produção ficam ligados a caixa de e-mails em `/api/dev/mailbox`, que expõe links de confirmação e de troca de senha, e os atalhos temporários que dão pacotes e códigos.
-- As contas e senhas de teste só existem com `seed-demo`, que é recusado em produção.
+- Em produção, `seed-demo` cria o conteúdo fictício sem a conta admin e com uma senha aleatória para Ana e Bia, impressa no terminal. A senha `album12345` só vale em dev.
 - **Use um processo só (sem `--workers`).** Os avisos em tempo real da troca ficam em memória. Com mais processos, o aviso só chega por leitura periódica (5 s) até o `Hub` passar a usar LISTEN/NOTIFY.
 - `--proxy-headers` é necessário atrás de proxy; sem ele, o limite de tentativas por IP trata todo mundo como um único IP.
 - Em servidor sem disco persistente, guarde as imagens no Cloudflare R2 (`R2_*`), em um bucket privado: só usuários logados as recebem, pelo próprio servidor. Sem isso, elas ficam em `backend/media/`, que precisa de backup.

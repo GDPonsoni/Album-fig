@@ -1,5 +1,6 @@
 """Conteúdo fictício para desenvolvimento: 5 orgs, 125 figurinhas com imagens geradas."""
 import random
+import secrets
 from datetime import UTC, datetime
 
 from PIL import Image, ImageDraw, ImageFont
@@ -11,6 +12,7 @@ from app.models import Org, Rarity, RedeemCode, Sticker, PackType, User
 from app.services import content
 from app.services.codes import generate_code
 from app.services.images import save_webp
+from app.settings import settings
 
 ORGS = [
     ("Tubarões da Engenharia", "#0f6e8c", "Atlética fictícia de exemplo. Treinos de natação às terças e a melhor bateria do campus."),
@@ -131,18 +133,19 @@ def seed_demo() -> None:
             pieces = content.generate_mosaic(db, org, 2, 3, rarities["comum"].id)
             number += len(pieces)
 
-        password = hasher.hash("album12345")
+        # A senha de dev está no README; online ela seria pública, e o admin é criado à parte.
+        plain = secrets.token_urlsafe(9) if settings.is_prod else "album12345"
+        accounts = [("ana@example.com", "Ana", False), ("bia@example.com", "Bia", False)]
+        if not settings.is_prod:
+            accounts.insert(0, ("admin@example.com", "Admin", True))
+        password = hasher.hash(plain)
         verified = datetime.now(UTC)
-        for email, nickname, is_admin in [
-            ("admin@example.com", "Admin", True),
-            ("ana@example.com", "Ana", False),
-            ("bia@example.com", "Bia", False),
-        ]:
+        for email, nickname, is_admin in accounts:
             db.add(User(email=email, nickname=nickname, password_hash=password, is_admin=is_admin, email_verified_at=verified))
 
         premium = db.scalar(select(PackType).where(PackType.slug == "premium"))
         codes = [generate_code() for _ in range(3)]
         db.add_all(RedeemCode(code=code, pack_type_id=premium.id, label="biblioteca") for code in codes)
         db.commit()
-    print("Conteúdo de teste criado. Contas (senha album12345): admin@, ana@ e bia@example.com")
+    print(f"Conteúdo de teste criado. Contas (senha {plain}):", ", ".join(email for email, *_ in accounts))
     print("Códigos:", ", ".join(codes))
