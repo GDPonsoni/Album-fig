@@ -62,6 +62,7 @@ cd backend && .venv/bin/alembic upgrade head
 .venv/bin/uvicorn app.main:app --port 8000 --proxy-headers
 ```
 
+- **No Render:** crie um Web Service com runtime Docker. O `Dockerfile` compila o front e roda a migração na subida. As variáveis entram pelo painel, em **Add from .env**, e o health check é `/api/health`. Sem shell no plano gratuito, crie o admin rodando `create-admin` localmente com o `DATABASE_URL` da Neon.
 - **`APP_ENV=prod` é obrigatório.** Fora de produção ficam ligados a caixa de e-mails em `/api/dev/mailbox`, que expõe links de confirmação e de troca de senha, e os atalhos temporários que dão pacotes e códigos.
 - As contas e senhas de teste só existem com `seed-demo`, que é recusado em produção.
 - **Use um processo só (sem `--workers`).** Os avisos em tempo real da troca ficam em memória. Com mais processos, o aviso só chega por leitura periódica (5 s) até o `Hub` passar a usar LISTEN/NOTIFY.
