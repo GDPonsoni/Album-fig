@@ -191,7 +191,6 @@ export function AlbumPage() {
   const [error, setError] = useState('');
   const [open, setOpen] = useState<Card | null>(null);
   const [lastPasted, setLastPasted] = useState<number | null>(null);
-  const [flying, setFlying] = useState<number | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const detailsRef = useRef(details);
   detailsRef.current = details;
@@ -309,31 +308,156 @@ export function AlbumPage() {
   }, []);
   const closeBack = useCallback(() => setOpen(null), []);
 
-  const paste = async (card: Card, tile: HTMLElement) => {
-    if (flying !== null || !index) return;
-    setError('');
+  // Colar é otimista: o voo começa no toque e o POST corre em paralelo. O que foi
+  // colado localmente some da bandeja até o servidor confirmar (ou recusar).
+  const [hidden, setHidden] = useState<Set<number>>(() => new Set());
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  const animBusy = useRef(false);
+  const flights = useRef(new Map<number, Flight>());
+  const failed = useRef(new Set<number>());
+  const pendingPosts = useRef(0);
+  const dirty = useRef(new Map<string, PageMeta>());
+  const reconcileRun = useRef(0);
+
+  const hide = (ids: number[]) => setHidden((all) => new Set([...all, ...ids]));
+
+  const applyPasted = useCallback((cards: Card[]) => {
+    const ids = new Map(cards.map((card) => [card.id, card]));
+    const keyOf = (card: Card) => `${card.org_id}:${card.is_mosaic_piece ? 0 : card.page_no}`;
+    setDetails((all) => {
+      const next = { ...all };
+      for (const [key, detail] of Object.entries(all)) {
+        if (!detail.slots.some((slot) => ids.has(slot.sticker_id) && !slot.filled)) continue;
+        next[key] = {
+          ...detail,
+          slots: detail.slots.map((slot) => (ids.has(slot.sticker_id) ? { ...slot, filled: true, card: ids.get(slot.sticker_id) } : slot)),
+        };
+      }
+      return next;
+    });
+    setIndex((current) => {
+      if (!current) return current;
+      const perPage = new Map<string, number>();
+      const perOrg = new Map<number, number>();
+      for (const card of cards) {
+        perPage.set(keyOf(card), (perPage.get(keyOf(card)) ?? 0) + 1);
+        perOrg.set(card.org_id, (perOrg.get(card.org_id) ?? 0) + 1);
+      }
+      return {
+        ...current,
+        filled: current.filled + cards.length,
+        pages: current.pages.map((p) => ({ ...p, filled: p.filled + (perPage.get(pageKey(p)) ?? 0) })),
+        orgs: current.orgs.map((o) => ({ ...o, filled: o.filled + (perOrg.get(o.id) ?? 0) })),
+      };
+    });
+  }, []);
+
+  // Só troca o estado local pelo do servidor quando não há mais nenhum POST em curso,
+  // para uma resposta antiga não desfazer na tela uma colagem mais recente.
+  const reconcile = useCallback(async () => {
+    if (pendingPosts.current > 0) return;
+    const run = ++reconcileRun.current;
+    const metas = [...dirty.current.entries()];
+    try {
+      const [fresh, ...pagesData] = await Promise.all([
+        api<AlbumIndex>('/album'),
+        ...metas.map(([, page]) => api<PageDetail>(`/album/orgs/${page.org_id}/pages/${page.page_no}`).catch(() => null)),
+      ]);
+      if (pendingPosts.current > 0 || run !== reconcileRun.current) return;
+      setIndex(fresh);
+      setDetails((all) => {
+        const next = { ...all };
+        metas.forEach(([key], i) => {
+          const detail = pagesData[i];
+          if (detail) next[key] = detail;
+        });
+        return next;
+      });
+      for (const [key] of metas) dirty.current.delete(key);
+      failed.current.clear();
+      setHidden(new Set());
+    } catch {
+      // Sem rede: o estado otimista fica até a próxima reconciliação.
+    }
+  }, []);
+
+  const track = useCallback(
+    (request: Promise<unknown>, ids: number[]) => {
+      pendingPosts.current += 1;
+      request
+        .catch((err: Error) => {
+          for (const id of ids) {
+            failed.current.add(id);
+            flights.current.get(id)?.cancel();
+          }
+          setError(err.message);
+        })
+        .finally(() => {
+          pendingPosts.current -= 1;
+          reconcile();
+        });
+    },
+    [reconcile],
+  );
+
+  // As páginas de destino da bandeja já ficam carregadas, para o voo não esperar a rede.
+  const requested = useRef(new Set<string>());
+  useEffect(() => {
+    if (!index) return;
+    const wanted = new Map<string, PageMeta>();
+    for (const card of index.tray) {
+      const page = index.pages.find((p) => p.org_id === card.org_id && p.page_no === (card.is_mosaic_piece ? 0 : card.page_no));
+      if (page) wanted.set(pageKey(page), page);
+      if (wanted.size >= 8) break;
+    }
+    for (const [key, page] of wanted) {
+      if (detailsRef.current[key] || requested.current.has(key)) continue;
+      requested.current.add(key);
+      loadPage(page).catch(() => requested.current.delete(key));
+    }
+  }, [index, loadPage]);
+
+  const paste = (card: Card, tile: HTMLElement) => {
+    if (animBusy.current || hiddenRef.current.has(card.id) || !index) return;
     const target = index.pages.findIndex((p) => p.org_id === card.org_id && p.page_no === (card.is_mosaic_piece ? 0 : card.page_no));
     if (target < 0) return;
     const position = target + 1;
     const meta = index.pages[target];
+    const key = pageKey(meta);
     const from = tile.getBoundingClientRect();
-    setFlying(card.id);
-    try {
-      await post(`/album/paste/${card.id}`);
-      if (position !== safeCurrent) await slideTo(position);
-      if (!detailsRef.current[pageKey(meta)]) await loadPage(meta);
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      await flyToSlot(card, from);
-      await Promise.all([loadPage(meta), loadIndex()]);
-      setLastPasted(card.id);
-      buzz(15);
-      window.setTimeout(() => setLastPasted(null), 500);
-    } catch (err) {
-      setError((err as Error).message);
-      await loadIndex().catch(() => {});
-    } finally {
-      setFlying(null);
-    }
+    animBusy.current = true;
+    setError('');
+    hide([card.id]);
+    dirty.current.set(key, meta);
+    track(post(`/album/paste/${card.id}`), [card.id]);
+
+    void (async () => {
+      try {
+        let moved = false;
+        if (position !== safeCurrent) {
+          await slideTo(position);
+          moved = true;
+        }
+        if (!detailsRef.current[key]) {
+          await loadPage(meta).catch(() => {});
+          moved = true;
+        }
+        if (moved) await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (failed.current.has(card.id)) return;
+        const flight = flyToSlot(card, from);
+        flights.current.set(card.id, flight);
+        const landed = await flight.finished;
+        flights.current.delete(card.id);
+        if (!landed || failed.current.has(card.id)) return;
+        applyPasted([card]);
+        setLastPasted(card.id);
+        buzz(15);
+        window.setTimeout(() => setLastPasted(null), 500);
+      } finally {
+        animBusy.current = false;
+      }
+    })();
   };
 
   if (!index) {
@@ -341,6 +465,7 @@ export function AlbumPage() {
   }
 
   const meta = pages[safeCurrent];
+  const trayCards = index.tray.filter((card) => !hidden.has(card.id));
   const renderPage = (position: number) => {
     if (position === 0) return <CoverPage index={index} goTo={(page) => slideTo(page)} />;
     const page = pages[position];
@@ -388,15 +513,16 @@ export function AlbumPage() {
 
       <Message>{error}</Message>
 
-      <section className={`tray${index.tray.length ? '' : ' tray-empty'}`} aria-label="Bandeja de figurinhas para colar">
-        {index.tray.length ? (
+      <section className={`tray${trayCards.length ? '' : ' tray-empty'}`} aria-label="Bandeja de figurinhas para colar">
+        {trayCards.length ? (
           <>
-            <p className="tray-label"><b>{index.tray.length}</b> para colar · toque para colar, deslize para ver mais</p>
+            <p className="tray-label"><b>{trayCards.length}</b> para colar · toque para colar, deslize para ver mais</p>
             <TrayRow>
-              {index.tray.map((card) => (
+              {trayCards.map((card) => (
                 <button
                   key={card.id}
-                  className={`tray-tile${flying === card.id ? ' taking-off' : ''}`}
+                  className="tray-tile"
+                  data-tray={card.id}
                   aria-label={`Colar ${card.name}`}
                   disabled={!user?.verified}
                   onClick={(event) => paste(card, event.currentTarget)}
@@ -407,7 +533,7 @@ export function AlbumPage() {
             </TrayRow>
           </>
         ) : (
-          <p className="tray-label">Bandeja vazia. Abra um pacote para ganhar figurinhas.</p>
+          <p className="tray-label">{hidden.size ? 'Colando…' : 'Bandeja vazia. Abra um pacote para ganhar figurinhas.'}</p>
         )}
       </section>
 
@@ -416,10 +542,17 @@ export function AlbumPage() {
   );
 }
 
-/** A figurinha sai da bandeja e voa até o espaço. Só usa transform, para manter 60 fps. */
-function flyToSlot(card: Card, from: DOMRect): Promise<void> {
+interface Flight {
+  finished: Promise<boolean>; // false quando o voo foi cancelado
+  cancel: () => void;
+}
+
+const afterPaint = (run: () => void) => requestAnimationFrame(() => requestAnimationFrame(run));
+
+/** A figurinha sai da bandeja e voa até o espaço. Lê a geometria uma vez e só anima transform. */
+function flyToSlot(card: Card, from: DOMRect, delay = 0): Flight {
   const slot = document.querySelector<HTMLElement>(`.album-panel [data-slot="${card.id}"]`);
-  if (!slot || lowFx() || !card.image_url) return Promise.resolve();
+  if (!slot || lowFx() || !card.image_url) return { finished: Promise.resolve(true), cancel: () => {} };
   const to = slot.getBoundingClientRect();
   const clone = document.createElement('img');
   clone.src = card.image_url;
@@ -436,10 +569,20 @@ function flyToSlot(card: Card, from: DOMRect): Promise<void> {
       { transform: 'translate(0, 0) scale(1.08) rotate(1deg)', offset: 0.88 },
       { transform: 'translate(0, 0) scale(1)' },
     ],
-    { duration: 560, easing: 'cubic-bezier(.3,.6,.3,1)' },
+    { duration: 560, delay, easing: 'cubic-bezier(.3,.6,.3,1)', fill: 'backwards' },
   );
-  return animation.finished.then(
-    () => clone.remove(),
-    () => clone.remove(),
-  );
+  return {
+    // O clone só sai depois que o espaço preenchido já foi pintado, para não piscar.
+    finished: animation.finished.then(
+      () => {
+        afterPaint(() => clone.remove());
+        return true;
+      },
+      () => {
+        clone.remove();
+        return false;
+      },
+    ),
+    cancel: () => animation.cancel(),
+  };
 }
