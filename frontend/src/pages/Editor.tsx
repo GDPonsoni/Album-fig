@@ -131,7 +131,15 @@ export function EditorChapter() {
     const body = latest.current;
     if (!body) return false;
     setSave({ state: 'saving' });
-    const request = api<{ revision: Row }>(`${base}/draft`, { method: 'PUT', body: { content: body } }).then(
+    // Linha de link ainda em branco (só o "https://" inicial) não impede de salvar o resto: fica de fora.
+    const clean: ChapterContent = {
+      ...body,
+      stickers: body.stickers.map((sticker) => ({
+        ...sticker,
+        back_links: sticker.back_links.filter((link) => link.label.trim() !== '' || !['', 'https://'].includes(link.url.trim())),
+      })),
+    };
+    const request = api<{ revision: Row }>(`${base}/draft`, { method: 'PUT', body: { content: clean } }).then(
       (result) => {
         setRevision(result.revision);
         // Se o conteúdo mudou enquanto salvava, continua "por salvar".
@@ -139,7 +147,8 @@ export function EditorChapter() {
         return true;
       },
       (err: Error) => {
-        setSave({ state: 'error', message: err.message });
+        // Se a pessoa já corrigiu enquanto salvava, o que falhou é passado: tenta o conteúdo novo.
+        setSave(latest.current === body ? { state: 'error', message: err.message } : { state: 'dirty' });
         return false;
       },
     );

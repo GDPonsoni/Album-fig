@@ -20,12 +20,20 @@ export function ImageCropper({ file, spec, onDone, onCancel }: { file: File; spe
   const viewH = Math.round(viewW / ratio);
 
   useEffect(() => {
-    const url = URL.createObjectURL(file);
-    const element = new Image();
-    element.onload = () => setImage(element);
-    element.onerror = () => setError('Não foi possível abrir esta imagem. Use PNG, JPEG ou WebP.');
-    element.src = url;
-    return () => URL.revokeObjectURL(url);
+    // Data URL e não blob:, porque a CSP do app só permite imagens 'self', data: e https.
+    let alive = true;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const element = new Image();
+      element.onload = () => alive && setImage(element);
+      element.onerror = () => alive && setError('Não foi possível abrir esta imagem. Use PNG, JPEG ou WebP.');
+      element.src = String(reader.result);
+    };
+    reader.onerror = () => alive && setError('Não foi possível ler este arquivo.');
+    reader.readAsDataURL(file);
+    return () => {
+      alive = false;
+    };
   }, [file]);
 
   // A imagem sempre cobre o quadro: a escala mínima é a de "cobrir", e o deslocamento é limitado às bordas.

@@ -79,3 +79,33 @@ Só o que foi decidido além das seções 3 e 4 do `PLANO_FABLE.md`. Formato: de
 33. **`daily.timezone` e os dois TTLs de troca também podem variar por álbum**; limites de tentativa e de
     cadastro são sempre globais.
 34. **Cinco abas no rodapé** (Álbum, Pacotes, Trocar, Álbuns, Conta).
+
+## Fases 2 e 3
+
+35. **O 2FA é por sessão (`user_session.mfa_at`) e vale 15 minutos**, não é exigido no login. *Descartado:* exigir no login.
+    *Motivo:* o login serve a todos os usuários; o reforço só pesa onde há risco (aprovar, publicar, desfazer, conceder papel).
+    Rejeitar e revogar não pedem 2FA: negar e tirar acesso não são ações a proteger.
+36. **Ativar o 2FA pede a senha**; desligar pede senha e o segundo fator em dia. *Motivo:* uma sessão aberta e esquecida não
+    basta para trocar o fator.
+37. **O código TOTP não vale duas vezes** (`totp_last_step`), aceita o passo atual e os vizinhos, e 5 erros bloqueiam por 15 min
+    (somando código do app e de recuperação).
+38. **O conteúdo do editor rejeita campo desconhecido** (`extra=forbid`), o que barra `number`, `rarity_id`, `image_url` e afins por
+    construção. Texto é guardado como texto: só se removem caracteres de controle e de direção (o front nunca usa HTML).
+39. **Links do verso**: só `https`, sem usuário/senha, host com ponto e nome válido (sem IP nem `localhost`), porta omitida ou 443,
+    até 300 caracteres. É mais estrito que o admin, que aceita qualquer `HttpUrl`.
+40. **Ativos pendentes são privados por prefixo (`capitulos/`)**: só o superadmin e os editores do capítulo os baixam; os demais
+    recebem a mesma 404 de arquivo inexistente. Publicar marca o ativo como `approved`.
+41. **Um capítulo tem uma única revisão em aberto**, imposto por índice parcial único no banco. Rejeitada continua "aberta" e volta a
+    rascunho quando o editor mexe.
+42. **Rollback cria uma revisão nova** (já publicada) com o conteúdo anterior e marca a revertida como `superseded`, em vez de
+    reabrir a antiga. *Motivo:* o histórico fica linear e dá para desfazer o rollback.
+43. **O snapshot do rollback guarda número e raridade de cada figurinha**, para restaurar exatamente o que havia, e é reaplicado pelas
+    mesmas regras (com o álbum em andamento, um rollback que removeria figurinha é recusado).
+44. **Figurinha removida pela publicação (só antes do início)**: sem histórico, é apagada; com histórico, fica inativa.
+45. **Com o álbum em andamento a publicação ignora a raridade sugerida** e recusa override de raridade ou número, até do superadmin.
+46. **Imagens que saem de produção não são apagadas** na publicação, porque o rollback precisa delas.
+47. **A prévia mostra a ordem, não o número**, das figurinhas novas: o número só nasce na publicação.
+48. **Capítulos têm `layout` (orientação, títulos, textos, fundos) e `published_revision_id`** na própria linha de `album_chapter`.
+49. **Branch única para F2 e F3** (ver `PROGRESSO.md`).
+50. **Recorte no cliente em data URL**, não `blob:`, para não afrouxar a CSP.
+51. **Autosave do editor** 1,5 s depois da última mudança; linhas de link em branco ficam de fora do que é enviado.

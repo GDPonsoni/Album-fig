@@ -70,3 +70,77 @@ Não verificado na Fase 1:
 
 - `seed-demo` com `APP_ENV=prod` num banco vazio (o trecho que omite o admin e sorteia a senha não mudou).
 - A migration contra o Neon/produção, por regra do plano. Ver "o que revisar" no relatório final.
+
+## Fase 2 — Papéis, rascunho e publicação (`feat/f2-publicacao`)
+
+| Tarefa | Status | Observações |
+| --- | --- | --- |
+| 2.1 Papéis | feito | `role_grant`, conferido no banco a cada requisição; conceder (com 2FA), listar, revogar. |
+| 2.2 Revisões e ativos | feito | Esquema do conteúdo em Pydantic (`extra=forbid`); upload reencodado, privado, com cota e rate limit. |
+| 2.3 Fluxo | feito | Rascunho → enviar → aprovar/rejeitar (nota) → publicar. |
+| 2.4 Publicação | feito | Transação única; regras por estado do álbum; `previous_content` para rollback. |
+| 2.5 Painel de revisão | feito | `/admin/revisoes`: fila, diff, prévia do publicado e do proposto, raridade/número, publicar, rollback, histórico, auditoria. |
+| 2.6 2FA do superadmin | feito | TOTP (`pyotp`), 10 códigos de recuperação em hash, `reset-2fa`, tela em Conta. |
+| 2.7 Testes de segurança | feito | `tests/test_publicacao.py` (67 testes). |
+
+## Fase 3 — Interface do editor (`feat/f2-publicacao`, mesma branch)
+
+| Tarefa | Status | Observações |
+| --- | --- | --- |
+| 3.1 Renderização compartilhada | feito | `components/AlbumPages.tsx` serve o jogo, a prévia do editor e o painel de revisão. |
+| 3.2 Área do editor | feito | `/editor/:capitulo`: orientação, grades predefinidas, formulários, recorte no cliente, prévia ao vivo, autosave, aviso ao sair. |
+| 3.3 Painel do superadmin completo | feito | Editores por capítulo (conceder/revogar), visão do que cada org faz, fila de revisões; métricas mantidas. |
+
+**Decisão de branch:** o plano pedia `feat/f3-editor` a partir da F2. Como a F3 foi feita em seguida e o front da F2 (painel de
+revisão e prévia) depende da extração da renderização (3.1), ficou tudo em `feat/f2-publicacao`, em commits separados.
+
+Testes rodados ao fim:
+
+- `cd backend && .venv/bin/python -m pytest` → 215 passaram.
+- `cd frontend && npm run build` e `npm test` → compila; 4 passaram.
+- `node dev/e2e.mjs` → todos os passos. `node dev/e2e-editor.mjs` → editora entra pelo papel, estrutura travada com o álbum
+  em andamento, autosave, upload com recorte, link `javascript:` recusado, envio trava, aprovar pede o código de 2FA, publicação,
+  o jogador vê o título publicado, revogar bloqueia o editor na recarga seguinte.
+- Migration `0007`: sobe e desce (`tests/test_migration.py::test_cada_migration_desce_e_sobe` anda por todas as revisões).
+
+Bugs achados pelo E2E e corrigidos: recorte quebrado pela CSP (`blob:`) → trocado por data URL; autosave não retomava depois de
+erro se a pessoa corrigia durante o salvamento; linha de link em branco impedia salvar o resto.
+
+# Relatório final
+
+## O que ficou pronto
+
+Todas as tarefas das Fases 0 a 3, com testes. Resumo: UX (colar fluido, colar tudo, histórico de pacotes, tipo do próximo pacote,
+QR de códigos, leitor de QR de troca), estimador, álbuns sazonais (universidade, álbum, capítulo, participação, config por álbum,
+fechamento e imutabilidade, Meus álbuns, painel de álbuns), papéis, rascunho/revisão/publicação/rollback, 2FA e editor por capítulo.
+
+## O que não foi verificado
+
+- **Câmera real e iOS/Safari**: o leitor de QR só foi exercitado sem câmera (aviso) e em teste unitário de decodificação. Nenhum
+  teste em aparelho físico, nem da fluidez da colagem em celular fraco (só Chrome headless).
+- **Migração em produção (Neon)**: por regra do plano, não foi rodada. Foi validada em cópia do banco de dev, em banco de teste
+  com campanha sintética e no caminho de volta.
+- **TOTP com app autenticador real**: testado com `pyotp` nos dois lados; o QR foi gerado, mas não lido por um app.
+- **Imagens em R2**: o fluxo de ativos privados foi testado no disco local; o bucket (`R2_*`) não foi exercitado com ativos de editor.
+- `seed-demo` com `APP_ENV=prod` em banco vazio.
+
+## Riscos conhecidos
+
+- A 2FA vale por sessão, por 15 minutos; `revogar papel` não pede 2FA de propósito (tirar acesso tem que ser rápido).
+- Imagens que saem de produção ficam guardadas (o rollback precisa delas) e só vão embora quando a revisão deixa de existir; há
+  crescimento lento de armazenamento por capítulo, limitado pela cota de 100 ativos / 12 MB.
+- O estimador ignora trocas e a garantia mínima de raridade: é conservador.
+- Participação nasce no primeiro acerto da gaveta; quem nunca abriu o app num álbum não tem resumo dele.
+- Hub de trocas continua em memória (processo único), como antes.
+
+## O que revisar manualmente antes de mesclar
+
+1. **Migration `0004`** (`backend/migrations/versions/0004_albuns_sazonais.py`): o backfill, a exclusão de período e a decisão de só
+   criar o álbum "Calourada" se houver campanha. Rode numa cópia do banco real.
+2. **Publicação** (`services/revisions.py::apply_content`): é o único caminho de conteúdo de editor para produção; confira as regras por
+   estado do álbum e o tratamento de figurinhas removidas com histórico (viram inativas).
+3. **Permissões**: `api/deps.py` (`require_chapter_editor`, `admin_mfa`), `api/editor.py` (só escreve em `chapter_revision` e `asset`)
+   e a privacidade das imagens pendentes em `main.py` (`/media`).
+4. **2FA** (`services/mfa.py`): janela de ±1 passo, anti-replay, bloqueio e códigos de recuperação.
+5. A troca de comportamento em teste existente: remover figurinha deixou de apagar inventários (`test_admin_nao_apaga_figurinha_que_alguem_tem`).
+6. Decisões 1 a 40 em `docs/DECISOES.md`, em especial a 12 (estimativa muda um detalhe do plano) e a 26 (`purge-campaign` exige escopo).
