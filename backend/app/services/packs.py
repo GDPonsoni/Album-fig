@@ -78,16 +78,41 @@ def grant_pack(db: Session, user_id: int, pack_type_id: int, source: str, source
     return grant
 
 
+def daily_kind(today: date, last_grant_on: date | None, every: int, has_premium: bool) -> str:
+    """Regra única de escolha do pacote da gaveta: nos dias de premium, o primeiro
+    pacote entregue no dia é o premium. Pura, para a entrega e a previsão não divergirem."""
+    if has_premium and every > 0 and today.toordinal() % every == 0 and last_grant_on != today:
+        return "premium"
+    return "common"
+
+
+def _daily_pack_types(db: Session) -> dict[str, PackType | None]:
+    return {
+        "premium": db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.premium_pack_slug"))),
+        "common": db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.common_pack_slug"))),
+    }
+
+
 def _deliver(db: Session, user: User, today: date) -> None:
-    # Nos dias de premium, o primeiro pacote entregue no dia é o premium.
-    every: int = cfg(db, "daily.premium_every_n_days")
-    premium = db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.premium_pack_slug")))
-    if premium is not None and every > 0 and today.toordinal() % every == 0 and user.last_daily_grant_on != today:
-        pack_type = premium
-    else:
-        pack_type = db.scalar(select(PackType).where(PackType.slug == cfg(db, "daily.common_pack_slug")))
-    grant_pack(db, user.id, pack_type.id, "daily", today.isoformat())
+    types = _daily_pack_types(db)
+    kind = daily_kind(today, user.last_daily_grant_on, int(cfg(db, "daily.premium_every_n_days")), types["premium"] is not None)
+    grant_pack(db, user.id, types[kind].id, "daily", today.isoformat())
     user.last_daily_grant_on = today
+
+
+def next_pack_kind(db: Session, user: User) -> dict | None:
+    """O que a gaveta entregaria se o jogador abrisse o app no instante `next_pack_at`.
+    A entrega usa a data local do momento do acerto: quem só volta em outro dia
+    recebe conforme esse outro dia (e, no acúmulo, só o primeiro do dia é premium)."""
+    if user.next_pack_at is None:
+        return None
+    types = _daily_pack_types(db)
+    day = user.next_pack_at.astimezone(ZoneInfo(cfg(db, "daily.timezone"))).date()
+    kind = daily_kind(day, user.last_daily_grant_on, int(cfg(db, "daily.premium_every_n_days")), types["premium"] is not None)
+    pack_type = types[kind]
+    if pack_type is None:
+        return None
+    return {"slug": pack_type.slug, "name": pack_type.name, "is_premium": kind == "premium"}
 
 
 def _settle_drawer(db: Session, user: User) -> int:
@@ -177,3 +202,25 @@ def add_to_inventory(db: Session, user_id: int, sticker_id: int, quantity: int) 
             set_={"quantity": UserSticker.quantity + stmt.excluded.quantity},
         )
     )
+
+
+def history(db: Session, user: User, limit: int = 20) -> list[tuple[PackGrant, list[tuple[Sticker, bool]]]]:
+    """Últimos pacotes abertos, do mais recente para o mais antigo."""
+    grants = db.scalars(
+        select(PackGrant)
+        .where(PackGrant.user_id == user.id, PackGrant.opened_at.is_not(None))
+        .order_by(PackGrant.opened_at.desc(), PackGrant.id.desc())
+        .limit(limit)
+    ).all()
+    if not grants:
+        return []
+    rows = db.execute(
+        select(PackOpeningItem.pack_grant_id, Sticker, PackOpeningItem.is_new)
+        .join(Sticker, Sticker.id == PackOpeningItem.sticker_id)
+        .where(PackOpeningItem.pack_grant_id.in_([g.id for g in grants]))
+        .order_by(PackOpeningItem.pack_grant_id, PackOpeningItem.position)
+    ).all()
+    items: dict[int, list[tuple[Sticker, bool]]] = {}
+    for grant_id, sticker, is_new in rows:
+        items.setdefault(grant_id, []).append((sticker, is_new))
+    return [(grant, items.get(grant.id, [])) for grant in grants]

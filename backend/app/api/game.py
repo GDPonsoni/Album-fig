@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -73,19 +73,32 @@ def stock(user: User = Depends(current_user), db: Session = Depends(get_db)):
         "daily_cap": cfg(db, "daily.stock_cap"),
         "daily_in_stock": sum(g.source == "daily" for g in grants),
         "next_pack_at": user.next_pack_at,
+        "next_pack_kind": packs.next_pack_kind(db, user),
         "server_now": now(),
         "refill_minutes": cfg(db, "daily.refill_minutes"),
         "dev_tools": not settings.is_prod,
     }
 
 
+def _opening_view(grant: PackGrant, items: list) -> dict:
+    return {
+        "pack": _grant_view(grant),
+        "opened_at": grant.opened_at,
+        "items": [{**album.sticker_card(sticker), "is_new": is_new} for sticker, is_new in items],
+    }
+
+
+@router.get("/packs/history")
+def pack_history(
+    limit: int = Query(20, ge=1, le=50), user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    return [_opening_view(grant, items) for grant, items in packs.history(db, user, limit)]
+
+
 @router.post("/packs/{grant_id}/open")
 def open_pack(grant_id: int, user: User = Depends(verified_user), db: Session = Depends(get_db)):
     grant, result = packs.open_pack(db, user, grant_id)
-    payload = {
-        "pack": _grant_view(grant),
-        "items": [{**album.sticker_card(sticker), "is_new": is_new} for sticker, is_new in result],
-    }
+    payload = _opening_view(grant, result)
     db.commit()
     return payload
 

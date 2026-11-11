@@ -429,6 +429,14 @@ button:disabled { cursor: default; }
 .drawer-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; border: 2px dashed #46557a; border-radius: 10px; color: #aab4ca; text-align: center; }
 .drawer-empty small { font-size: 0.74rem; font-weight: 600; }
 .drawer-next { border-color: var(--gold); color: #fff; }
+.drawer-premium { padding: 0 8px; border-radius: 999px; background: var(--gold); color: var(--navy-deep); font-size: 0.66rem; font-style: normal; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+.history { margin-top: 18px; }
+.history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.history-pack { padding: 10px 12px 14px; border-radius: 14px; background: rgb(255 255 255 / 0.06); }
+.history-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0 0 10px; }
+.history-head strong { color: #fff; }
+.history-head small { color: #cfd6e6; font-size: 0.76rem; }
+.history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 14px 10px; }
 .drawer-time { font-size: clamp(0.92rem, 4.6vw, 1.25rem); font-weight: 800; font-variant-numeric: tabular-nums; }
 .drawer-bar { width: 85%; height: 5px; border-radius: 3px; background: #33405f; overflow: hidden; }
 .drawer-bar span { display: block; height: 100%; background: var(--gold); transition: width 1s linear; }

@@ -6,15 +6,23 @@ import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { buzz, lowFx } from '../fx';
 
 type Drawn = Card & { is_new: boolean };
+interface Opening {
+  pack: GrantView;
+  opened_at: string;
+  items: Drawn[];
+}
 interface Stock {
   stock: GrantView[];
   daily_cap: number;
   daily_in_stock: number;
   next_pack_at: string | null;
+  next_pack_kind: { slug: string; name: string; is_premium: boolean } | null;
   server_now: string;
   refill_minutes: number;
   dev_tools: boolean;
 }
+
+const HISTORY_LIMIT = 20;
 
 function formatCountdown(ms: number) {
   const total = Math.max(0, Math.ceil(ms / 1000));
@@ -59,7 +67,7 @@ function Wrapper({ grant }: { grant: GrantView }) {
   );
 }
 
-function Opener({ grant, onClose, onNext }: { grant: GrantView; onClose: () => void; onNext: (() => void) | null }) {
+function Opener({ grant, onClose, onNext, onOpened }: { grant: GrantView; onClose: () => void; onNext: (() => void) | null; onOpened: (opening: Opening) => void }) {
   const [stage, setStage] = useState<'sealed' | 'tearing' | 'reveal' | 'summary'>('sealed');
   const [items, setItems] = useState<Drawn[]>([]);
   const [shown, setShown] = useState(0);
@@ -74,14 +82,15 @@ function Opener({ grant, onClose, onNext }: { grant: GrantView; onClose: () => v
     buzz(20);
     const wait = new Promise((resolve) => window.setTimeout(resolve, lowFx() ? 0 : 520));
     try {
-      const [result] = await Promise.all([post<{ items: Drawn[] }>(`/packs/${grant.id}/open`), wait]);
+      const [result] = await Promise.all([post<Opening>(`/packs/${grant.id}/open`), wait]);
+      onOpened(result);
       setItems(result.items);
       setStage('reveal');
       announce(result.items[0]);
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [grant.id]);
+  }, [grant.id, onOpened]);
 
   const onDown = (event: ReactPointerEvent) => {
     startX.current = event.clientX;
@@ -209,7 +218,8 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
             <li key={`empty-${i}`} className={`drawer-empty${i === 0 && left !== null ? ' drawer-next' : ''}`}>
               {i === 0 && left !== null ? (
                 <>
-                  <small>Chega em</small>
+                  <small>{data.next_pack_kind?.is_premium ? 'Premium chega em' : 'Chega em'}</small>
+                  {data.next_pack_kind?.is_premium ? <em className="drawer-premium">Premium</em> : null}
                   <strong className="drawer-time" role="timer">{formatCountdown(left)}</strong>
                   <span className="drawer-bar"><span style={{ width: `${progress}%` }} /></span>
                 </>
@@ -221,7 +231,7 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
         </ul>
         <p className="drawer-note">
           {empty === 0
-            ? `Gaveta cheia. Próximo pacote em ${left === null ? '…' : formatCountdown(left)}, se abrir espaço até lá.`
+            ? `Gaveta cheia. Próximo pacote${data.next_pack_kind?.is_premium ? ' (premium)' : ''} em ${left === null ? '…' : formatCountdown(left)}, se abrir espaço até lá.`
             : empty > 1
               ? 'Cada pacote entregue já começa a contagem do próximo.'
               : 'Quando este chegar, a gaveta fica cheia.'}
@@ -238,6 +248,37 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
         </section>
       ) : null}
     </>
+  );
+}
+
+function History({ openings }: { openings: Opening[] }) {
+  if (!openings.length) return null;
+  const when = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return (
+    <section className="history" aria-label="Últimos pacotes abertos">
+      <h2 className="extras-title">Últimos pacotes abertos</h2>
+      <ul className="history-list">
+        {openings.map((opening) => {
+          const fresh = opening.items.filter((item) => item.is_new).length;
+          return (
+            <li key={opening.pack.id} className="history-pack">
+              <p className="history-head">
+                <strong>{opening.pack.name}</strong>
+                <small>{when(opening.opened_at)} · {fresh ? `${fresh} ${fresh === 1 ? 'nova' : 'novas'}` : 'só repetidas'}</small>
+              </p>
+              <div className="history-grid">
+                {opening.items.map((item, i) => (
+                  <div key={i} className="summary-item">
+                    <StickerArt card={item} />
+                    <em className={item.is_new ? 'seal-new' : 'seal-dup'}>{item.is_new ? 'Nova' : 'Repetida'}</em>
+                  </div>
+                ))}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -343,6 +384,11 @@ export function PacksPage() {
   const [error, setError] = useState('');
   const [code, setCode] = useState('');
   const [reward, setReward] = useState<GrantView | null>(null);
+  const [history, setHistory] = useState<Opening[]>([]);
+  // O pacote aberto entra no histórico na hora, sem esperar outra ida ao servidor.
+  const addOpening = useCallback((opening: Opening) => {
+    setHistory((all) => [opening, ...all.filter((o) => o.pack.id !== opening.pack.id)].slice(0, HISTORY_LIMIT));
+  }, []);
 
   const load = useCallback(async () => {
     const result = await api<Stock>('/packs');
@@ -353,6 +399,7 @@ export function PacksPage() {
 
   useEffect(() => {
     load().catch((err) => setError(err.message));
+    api<Opening[]>(`/packs/history?limit=${HISTORY_LIMIT}`).then(setHistory).catch(() => {});
   }, [load]);
 
   const reload = useCallback(() => {
@@ -378,6 +425,7 @@ export function PacksPage() {
         </>
       ) : null}
       <RedeemForm onRedeemed={(grant) => { setReward(grant); reload(); }} disabled={!user?.verified} code={code} setCode={setCode} />
+      <History openings={history} />
       {reward ? (
         <CodeReward
           grant={reward}
@@ -390,6 +438,7 @@ export function PacksPage() {
           key={opening.id}
           grant={opening}
           onClose={close}
+          onOpened={addOpening}
           onNext={remaining.length ? () => { setData((d) => (d ? { ...d, stock: remaining } : d)); setOpening(remaining[0]); } : null}
         />
       ) : null}
