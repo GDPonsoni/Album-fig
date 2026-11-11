@@ -41,3 +41,41 @@ Só o que foi decidido além das seções 3 e 4 do `PLANO_FABLE.md`. Formato: de
     alcança o total exato. O resultado diz também se o dia cai dentro da duração do álbum.
 15. **Estimativa: alerta extra `unreachable`** quando alguma raridade com figurinhas não é sorteada por nenhum
     pacote da gaveta (o álbum seria impossível de completar sem código ou troca).
+
+## Fase 1
+
+16. **A migration só cria o álbum "Calourada" se houver campanha para herdar** (alguma org, figurinha, pacote,
+    código ou troca). Banco vazio fica só com a universidade e os tipos de pacote modelo; o `seed-demo` ou o
+    painel criam o álbum. *Motivo:* um álbum pronto e vazio num banco novo bloquearia o período sem ter conteúdo.
+17. **Os tipos de pacote existentes viram os do álbum e ganham uma cópia como modelo global.** Pacotes e códigos
+    já concedidos continuam apontando para os mesmos ids; o modelo (`album_id` nulo) serve aos álbuns futuros.
+18. **Slug de pacote é único por álbum** (e único entre os modelos), por dois índices parciais.
+19. **Participação para todo usuário existente** na migration, como pede o plano; no jogo, a participação nasce
+    no primeiro acerto da gaveta (conta confirmada).
+20. **Sem álbum em andamento, as leituras devolvem vazio e as escritas respondem 409.** `GET /album` e
+    `GET /packs` trazem `album: null`. *Motivo:* o app precisa abrir e mostrar o estado vazio.
+21. **Mensagem do 409:** "Álbum encerrado." se a universidade já teve álbum que acabou; senão "Nenhum álbum em
+    andamento.". Objeto de álbum antigo (pacote, figurinha) responde "Álbum encerrado.".
+22. **Código e link de troca de outro álbum respondem como inválidos**, com a mesma mensagem genérica.
+23. **Álbum encerrado só é visível a quem participou; rascunho e agendado não aparecem para jogador.** Tudo o
+    mais responde a mesma 404 de álbum inexistente (sem IDOR e sem revelar que o álbum existe).
+24. **Fechamento em três gatilhos**, todos idempotentes: a varredura de 3 s que já existia, o primeiro acesso a
+    "Meus álbuns" e o comando `close-albums`. O resumo é gravado com `WHERE final_stats IS NULL`.
+25. **`received_total` conta figurinhas recebidas em pacotes** (não as vindas de troca); `duplicates` é a soma do
+    que passa de um exemplar no momento do fechamento.
+26. **`purge-campaign` exige `--album-id` ou `--all-accounts`.** Com álbum, apaga só o que foi jogado nele e
+    mantém contas e conteúdo; `--all-accounts` é o comportamento antigo. *Motivo:* sem escolha explícita, o
+    comando irreversível poderia apagar mais do que se queria.
+27. **Admin, álbum em andamento:** só título, capa e data de fim mudam no álbum; nas figurinhas ficam
+    congelados `org_id`, `number`, `rarity_id` e `active`; não se cria nem remove figurinha, capítulo ou mosaico.
+    Tipos de pacote e parâmetros continuam editáveis pelo superadmin; em álbum encerrado, nada muda.
+28. **Apagar álbum só se ninguém jogou** (sem participantes, pacotes, códigos ou trocas) e se não começou.
+29. **Imagem só é apagada do armazenamento quando nenhum registro mais aponta para ela**, porque álbum duplicado
+    compartilha os arquivos do original.
+30. **Mosaico e ordem saíram do cadastro de org** e foram para o capítulo, em `/admin/albums`.
+31. **Migration `0005` separada** para o `ON DELETE RESTRICT` de `user_sticker`, `pack_opening_item` e
+    `trade_offer`. Teste antigo que apagava figurinha com inventário foi reescrito (comportamento mudou de propósito).
+32. **O downgrade da `0004` recusa rodar com mais de um álbum**: o esquema antigo não comporta.
+33. **`daily.timezone` e os dois TTLs de troca também podem variar por álbum**; limites de tentativa e de
+    cadastro são sempre globais.
+34. **Cinco abas no rodapé** (Álbum, Pacotes, Trocar, Álbuns, Conta).

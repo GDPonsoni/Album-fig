@@ -17,7 +17,7 @@ from sqlalchemy import delete, select
 
 from app.api.auth import hasher
 from app.db import SessionLocal
-from app.models import AuditLog, PackGrant, PackType, User
+from app.models import Album, AuditLog, PackGrant, PackType, User
 from app.services.core import now
 
 PLAYERS = int(sys.argv[1]) if len(sys.argv) > 1 else 50
@@ -57,15 +57,24 @@ def player(index: int) -> None:
 
 
 with SessionLocal() as db:
-    pack = db.scalar(select(PackType).where(PackType.slug == "comum"))
+    # Os pacotes de carga são do álbum em andamento (o do seed-demo).
+    album = db.scalar(select(Album).where(Album.state == "ready", Album.starts_at <= now(), Album.ends_at > now()))
+    if album is None:
+        sys.exit("Nenhum álbum em andamento. Rode o seed-demo antes.")
+    pack = db.scalar(select(PackType).where(PackType.album_id == album.id, PackType.slug == "comum"))
     password_hash = hasher.hash(PASSWORD)
     users = [
-        User(email=f"carga{i}@example.com", nickname=f"carga{i}", password_hash=password_hash, email_verified_at=now())
+        User(
+            email=f"carga{i}@example.com", nickname=f"carga{i}", password_hash=password_hash,
+            email_verified_at=now(), university_id=album.university_id,
+        )
         for i in range(PLAYERS)
     ]
     db.add_all(users)
     db.flush()
-    db.add_all(PackGrant(user_id=u.id, pack_type_id=pack.id, source="admin") for u in users for _ in range(ROUNDS))
+    db.add_all(
+        PackGrant(user_id=u.id, album_id=album.id, pack_type_id=pack.id, source="admin") for u in users for _ in range(ROUNDS)
+    )
     db.commit()
     ids = [u.id for u in users]
 

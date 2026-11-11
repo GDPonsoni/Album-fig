@@ -111,7 +111,9 @@ def test_0004_sobre_campanha_existente_sobe_e_desce(scratch):
         assert _snapshot(conn, "SELECT slug, rarity_weights FROM pack_type WHERE album_id IS NOT NULL ORDER BY slug") == [
             ("comum", {"1": 80, "2": 17, "3": 3}), ("premium", {"1": 60, "2": 32, "3": 8}),
         ]
-        # As colunas antigas continuam lá até a 0006... que já rodou no head: sumiram só no fim.
+        # No head a 0006 já removeu as colunas antigas de user e org; os valores vivem na participação e no capítulo.
+        old = {(r[0], r[1]) for r in conn.execute(text("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'"))}
+        assert not old & {("user", "next_pack_at"), ("user", "last_daily_grant_on"), ("org", "sort_order"), ("org", "mosaic_image_url")}
         constraints = {row[0] for row in conn.execute(text("SELECT conname FROM pg_constraint"))}
         assert {"ex_album_ready_overlap", "ck_album_dates", "uq_sticker_album_number"} <= constraints
 
