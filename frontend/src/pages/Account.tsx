@@ -1,6 +1,126 @@
+import QRCode from 'qrcode';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { post } from '../api';
 import { useAuth } from '../auth';
-import { VerifyBanner } from '../components/ui';
+import { Message, VerifyBanner } from '../components/ui';
+
+/** Verificação em duas etapas do superadmin: sem ela não dá para aprovar, publicar nem conceder papéis. */
+function TwoFactor() {
+  const { user, refresh } = useAuth();
+  const [password, setPassword] = useState('');
+  const [setup, setSetup] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const canvas = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (setup && canvas.current) QRCode.toCanvas(canvas.current, setup.otpauth_uri, { width: 220, margin: 1 });
+  }, [setup]);
+
+  const guard = async (action: () => Promise<void>) => {
+    setError('');
+    setNote('');
+    try {
+      await action();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const start = (event: FormEvent) => {
+    event.preventDefault();
+    guard(async () => {
+      setSetup(await post('/auth/2fa/setup', { password }));
+      setPassword('');
+    });
+  };
+  const enable = (event: FormEvent) => {
+    event.preventDefault();
+    guard(async () => {
+      const result = await post<{ recovery_codes: string[] }>('/auth/2fa/enable', { code });
+      setCodes(result.recovery_codes);
+      setSetup(null);
+      setCode('');
+      await refresh();
+    });
+  };
+  const verify = (event: FormEvent) => {
+    event.preventDefault();
+    guard(async () => {
+      await post('/auth/2fa/verify', { code });
+      setCode('');
+      setNote('Código confirmado nesta sessão.');
+      await refresh();
+    });
+  };
+  const disable = (event: FormEvent) => {
+    event.preventDefault();
+    guard(async () => {
+      await post('/auth/2fa/disable', { password });
+      setPassword('');
+      setCodes(null);
+      setNote('Verificação em duas etapas desligada.');
+      await refresh();
+    });
+  };
+
+  if (!user) return null;
+  return (
+    <section className="panel paper two-factor" aria-label="Verificação em duas etapas">
+      <h2>Verificação em duas etapas</h2>
+      <Message>{error}</Message>
+      {note ? <Message kind="ok">{note}</Message> : null}
+      {codes ? (
+        <div className="recovery">
+          <p><b>Guarde estes códigos de recuperação.</b> Cada um vale uma vez, se você ficar sem o celular. Eles não serão mostrados de novo.</p>
+          <ul>{codes.map((item) => <li key={item}><code>{item}</code></li>)}</ul>
+          <button className="btn" onClick={() => setCodes(null)}>Já guardei</button>
+        </div>
+      ) : null}
+      {user.mfa_enabled ? (
+        <>
+          <p className="muted">
+            Ativa. {user.mfa_verified ? 'Código confirmado nesta sessão.' : 'Nesta sessão o código ainda não foi confirmado.'}
+          </p>
+          {!user.mfa_verified ? (
+            <form className="stack" onSubmit={verify}>
+              <label className="field"><span>Código do app (ou de recuperação)</span>
+                <input required minLength={6} maxLength={20} autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} />
+              </label>
+              <button className="btn btn-primary">Confirmar código</button>
+            </form>
+          ) : null}
+          <form className="stack" onSubmit={disable}>
+            <label className="field"><span>Senha, para desligar</span>
+              <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </label>
+            <button className="btn">Desligar</button>
+          </form>
+        </>
+      ) : setup ? (
+        <form className="stack" onSubmit={enable}>
+          <p>Leia o QR no app autenticador (Google Authenticator, Authy, 1Password…) e digite o código de 6 dígitos.</p>
+          <canvas ref={canvas} aria-label="QR do segredo de duas etapas" />
+          <p className="muted">Sem câmera? Digite a chave: <code className="secret">{setup.secret}</code></p>
+          <label className="field"><span>Código de 6 dígitos</span>
+            <input required inputMode="numeric" minLength={6} maxLength={7} autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} />
+          </label>
+          <button className="btn btn-primary">Ativar</button>
+        </form>
+      ) : (
+        <form className="stack" onSubmit={start}>
+          <p className="muted">Obrigatória para aprovar e publicar revisões e para conceder papéis de editor.</p>
+          <label className="field"><span>Sua senha</span>
+            <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          <button className="btn btn-primary">Começar a ativação</button>
+        </form>
+      )}
+    </section>
+  );
+}
 
 export function AccountPage() {
   const { user, signOut } = useAuth();
@@ -16,9 +136,12 @@ export function AccountPage() {
           <dt>E-mail</dt>
           <dd>{user.email}</dd>
         </dl>
-        <p className="muted">Seu e-mail não aparece para os outros jogadores. Os dados são apagados no fim da campanha.</p>
+        <p className="muted">Seu e-mail não aparece para os outros jogadores. Os álbuns que você jogou ficam guardados na sua conta.</p>
       </section>
+      {user.editor_chapters ? <Link className="btn btn-primary" to="/editor">Editar meu capítulo</Link> : null}
+      {user.is_admin ? <TwoFactor /> : null}
       {user.is_admin ? <Link className="btn" to="/admin">Painel admin</Link> : null}
+      {user.is_admin ? <Link className="btn" to="/admin/revisoes">Revisões e editores</Link> : null}
       <button className="btn" onClick={signOut}>Sair</button>
     </div>
   );

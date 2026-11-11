@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, post, type AlbumIndex, type Card, type PageDetail, type PageMeta, type Slot } from '../api';
 import { useAuth } from '../auth';
+import { MosaicPage, StickerPage } from '../components/AlbumPages';
 import { StickerSheet } from '../components/StickerSheet';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { lowFx, buzz } from '../fx';
@@ -35,91 +36,6 @@ function CoverPage({ index, goTo }: { index: AlbumIndex; goTo: (page: number) =>
           );
         })}
       </ul>
-    </article>
-  );
-}
-
-function EmptySlot({ slot }: { slot: Slot }) {
-  return (
-    <div className="slot-empty">
-      <svg viewBox="0 0 60 80" aria-hidden="true">
-        <circle cx="30" cy="30" r="13" />
-        <path d="M6 80c0-20 11-30 24-30s24 10 24 30z" />
-      </svg>
-      <b>{slot.number}</b>
-      {slot.hint ? <small>{slot.hint}</small> : null}
-    </div>
-  );
-}
-
-function StickerPage({ detail, onOpen, lastPasted }: { detail: PageDetail; onOpen: (slot: Slot) => void; lastPasted: number | null }) {
-  return (
-    <article className="album-page paper" style={{ '--org': detail.org.color } as React.CSSProperties}>
-      <header className="page-head">
-        {detail.org.logo_url ? <img src={detail.org.logo_url} alt="" /> : null}
-        <div>
-          <h2>{detail.org.name}</h2>
-          {detail.page_no === 1 ? <p>{detail.org.description}</p> : null}
-        </div>
-      </header>
-      {detail.slots.map((slot) => (
-        <button
-          key={slot.sticker_id}
-          className={`slot${lastPasted === slot.sticker_id ? ' just-pasted' : ''}`}
-          data-slot={slot.sticker_id}
-          disabled={!slot.filled}
-          aria-label={slot.filled ? `Ver verso de ${slot.card!.name}` : `Espaço vazio ${slot.number}`}
-          style={{ left: `${slot.layout.x}%`, top: `${slot.layout.y}%`, width: `${slot.layout.w}%`, height: `${slot.layout.h}%` }}
-          onClick={() => onOpen(slot)}
-        >
-          {slot.filled ? <StickerArt card={slot.card!} /> : <EmptySlot slot={slot} />}
-        </button>
-      ))}
-    </article>
-  );
-}
-
-function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail; onOpen: (slot: Slot) => void; lastPasted: number | null }) {
-  const { org } = detail;
-  const filled = detail.slots.filter((s) => s.filled).length;
-  return (
-    <article className="album-page paper" style={{ '--org': org.color } as React.CSSProperties}>
-      <header className="page-head">
-        <div>
-          <h2>Mosaico</h2>
-          <p>{org.name}: {filled} de {detail.slots.length} peças</p>
-        </div>
-      </header>
-      <div
-        className="mosaic"
-        style={{ gridTemplateColumns: `repeat(${org.mosaic_cols}, 1fr)`, gridTemplateRows: `repeat(${org.mosaic_rows}, 1fr)`, aspectRatio: `${2} / ${3}` }}
-      >
-        {org.mosaic_image_url ? <img className="mosaic-faded" src={org.mosaic_image_url} alt="" loading="lazy" /> : null}
-        {detail.slots.map((slot) => {
-          const index = slot.mosaic_index ?? 0;
-          const col = index % org.mosaic_cols;
-          const row = Math.floor(index / org.mosaic_cols);
-          const x = org.mosaic_cols > 1 ? (col / (org.mosaic_cols - 1)) * 100 : 0;
-          const y = org.mosaic_rows > 1 ? (row / (org.mosaic_rows - 1)) * 100 : 0;
-          return (
-            <button
-              key={slot.sticker_id}
-              data-slot={slot.sticker_id}
-              disabled={!slot.filled}
-              aria-label={slot.filled ? `Peça ${index + 1} colada` : `Peça ${index + 1}, espaço ${slot.number}`}
-              className={`mosaic-piece${slot.filled ? ' filled' : ''}${lastPasted === slot.sticker_id ? ' just-pasted' : ''}`}
-              style={
-                slot.filled
-                  ? { backgroundImage: `url(${org.mosaic_image_url})`, backgroundSize: `${org.mosaic_cols * 100}% ${org.mosaic_rows * 100}%`, backgroundPosition: `${x}% ${y}%` }
-                  : undefined
-              }
-              onClick={() => onOpen(slot)}
-            >
-              {slot.filled ? null : <b>{slot.number}</b>}
-            </button>
-          );
-        })}
-      </div>
     </article>
   );
 }

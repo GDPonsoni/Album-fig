@@ -18,6 +18,9 @@ import './styles.css';
 
 const AdminPage = lazy(() => import('./pages/Admin'));
 const AdminAlbumsPage = lazy(() => import('./pages/AdminAlbums'));
+const AdminReviewPage = lazy(() => import('./pages/AdminReview'));
+const EditorHome = lazy(() => import('./pages/Editor').then((m) => ({ default: m.EditorHome })));
+const EditorChapter = lazy(() => import('./pages/Editor').then((m) => ({ default: m.EditorChapter })));
 
 initFx();
 
@@ -45,6 +48,19 @@ createRoot(document.getElementById('root')!).render(
               </RequireAuth>
             }
           />
+          <Route
+            path="/admin/revisoes"
+            element={
+              <RequireAuth admin>
+                <Suspense fallback={<Splash />}>
+                  <AdminReviewPage />
+                </Suspense>
+              </RequireAuth>
+            }
+          />
+          {/* A área do editor só abre para quem tem o papel: o servidor responde 404 para os demais. */}
+          <Route path="/editor" element={<RequireAuth><Suspense fallback={<Splash />}><EditorHome /></Suspense></RequireAuth>} />
+          <Route path="/editor/:capitulo" element={<RequireAuth><Suspense fallback={<Splash />}><EditorChapter /></Suspense></RequireAuth>} />
           <Route
             path="/admin/*"
             element={

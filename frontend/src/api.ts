@@ -1,5 +1,6 @@
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** `mfa` vem do cabeçalho X-MFA: falta ativar (`setup`) ou só confirmar o código (`verify`). */
+  constructor(public status: number, message: string, public mfa: 'setup' | 'verify' | null = null) {
     super(message);
   }
 }
@@ -25,7 +26,12 @@ export async function api<T = any>(path: string, options: { method?: string; bod
     if (response.status >= 502 && typeof detail !== 'string') {
       throw new ApiError(response.status, 'O servidor está fora do ar. Tente de novo em instantes.');
     }
-    throw new ApiError(response.status, typeof detail === 'string' ? detail : 'Confira os dados e tente de novo.');
+    const mfa = response.headers.get('x-mfa');
+    throw new ApiError(
+      response.status,
+      typeof detail === 'string' ? detail : 'Confira os dados e tente de novo.',
+      mfa === 'setup' || mfa === 'verify' ? mfa : null,
+    );
   }
   return data as T;
 }
@@ -112,6 +118,8 @@ export interface Slot {
 export interface PageDetail {
   kind: 'stickers' | 'mosaic';
   page_no: number;
+  orientation?: 'portrait' | 'landscape';
+  page?: { title: string; text: string; background_url: string | null; layout: string };
   org: {
     id: number;
     name: string;
@@ -131,6 +139,63 @@ export interface User {
   nickname: string;
   verified: boolean;
   is_admin: boolean;
+  mfa_enabled: boolean;
+  mfa_verified: boolean;
+  editor_chapters: number;
+}
+
+// ---- conteúdo de um capítulo no formato do editor (o mesmo que a API valida)
+export interface ContentSticker {
+  key: string;
+  name: string;
+  asset_id: number | null;
+  size: 'P' | 'M' | 'G';
+  tag: string;
+  hint: string;
+  back_text: string;
+  back_links: { label: string; url: string }[];
+  page_no: number;
+  slot: { x: number; y: number; w: number; h: number };
+  suggested_rarity_id: number | null;
+  active: boolean;
+}
+
+export interface ContentPage {
+  page_no: number;
+  title: string;
+  text: string;
+  background_asset_id: number | null;
+  layout: string;
+}
+
+export interface ChapterContent {
+  layout: { orientation: 'portrait' | 'landscape' };
+  pages: ContentPage[];
+  mosaic: { asset_id: number | null; cols: number; rows: number } | null;
+  stickers: ContentSticker[];
+}
+
+export interface AssetView {
+  id: number;
+  url: string;
+  kind: string;
+  status: 'pending' | 'approved';
+  bytes?: number;
+}
+
+export interface OrgView {
+  id: number;
+  name: string;
+  description: string;
+  logo_url: string | null;
+  color: string;
+}
+
+export interface RarityView {
+  id: number;
+  name: string;
+  rank: number;
+  color: string;
 }
 
 export interface GrantView {

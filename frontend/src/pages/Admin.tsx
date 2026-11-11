@@ -358,6 +358,7 @@ export default function AdminPage() {
           </select>
         </label>
         <Link className="btn" to="/admin/albums">Álbuns, capítulos e estimativa</Link>
+        <Link className="btn" to="/admin/revisoes">Revisões e editores</Link>
       </div>
       <nav className="admin-tabs">
         {TABS.map((name) => <button key={name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>{name}</button>)}
