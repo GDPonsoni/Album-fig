@@ -460,6 +460,52 @@ export function AlbumPage() {
     })();
   };
 
+  const pasteAll = () => {
+    if (animBusy.current || !index) return;
+    const cards = index.tray.filter((card) => !hiddenRef.current.has(card.id));
+    if (!cards.length) return;
+    const keyOf = (card: Card) => `${card.org_id}:${card.is_mosaic_piece ? 0 : card.page_no}`;
+    const here = pages[safeCurrent];
+    const hereKey = here ? pageKey(here) : '';
+    // Toda a geometria é lida antes de qualquer escrita no DOM.
+    const viewport = window.innerWidth;
+    const origins = new Map<number, DOMRect>();
+    if (!lowFx()) {
+      document.querySelectorAll<HTMLElement>('.tray-tile[data-tray]').forEach((tile) => {
+        const rect = tile.getBoundingClientRect();
+        if (rect.right > 0 && rect.left < viewport) origins.set(Number(tile.dataset.tray), rect);
+      });
+    }
+    const stage = trackRef.current?.getBoundingClientRect();
+
+    animBusy.current = true;
+    setError('');
+    const ids = cards.map((card) => card.id);
+    hide(ids);
+    for (const page of index.pages) {
+      const key = pageKey(page);
+      if (detailsRef.current[key] && cards.some((card) => keyOf(card) === key)) dirty.current.set(key, page);
+    }
+    track(post('/album/paste-all'), ids);
+
+    // No máximo MAX_FLIGHTS voos, em sequência curta; o resto aparece de uma vez.
+    const visible = cards.filter((card) => origins.has(card.id));
+    const chosen = [...visible.filter((card) => keyOf(card) === hereKey), ...visible.filter((card) => keyOf(card) !== hereKey)].slice(0, MAX_FLIGHTS);
+    const running = chosen.map((card, i) => {
+      const from = origins.get(card.id)!;
+      const flight = keyOf(card) === hereKey || !stage ? flyToSlot(card, from, i * FLIGHT_STEP) : flyIntoAlbum(card, from, stage, i * FLIGHT_STEP);
+      flights.current.set(card.id, flight);
+      return flight.finished;
+    });
+    void Promise.all(running).then((landed) => {
+      for (const id of ids) flights.current.delete(id);
+      animBusy.current = false;
+      if (landed.includes(false) || ids.some((id) => failed.current.has(id))) return;
+      applyPasted(cards);
+      buzz([15, 30, 15]);
+    });
+  };
+
   if (!index) {
     return <div className="screen">{error ? <Message>{error}</Message> : <div className="album-skeleton" />}</div>;
   }
@@ -516,7 +562,12 @@ export function AlbumPage() {
       <section className={`tray${trayCards.length ? '' : ' tray-empty'}`} aria-label="Bandeja de figurinhas para colar">
         {trayCards.length ? (
           <>
-            <p className="tray-label"><b>{trayCards.length}</b> para colar · toque para colar, deslize para ver mais</p>
+            <div className="tray-head">
+              <p className="tray-label"><b>{trayCards.length}</b> para colar · toque para colar, deslize para ver mais</p>
+              {trayCards.length > 1 ? (
+                <button className="tray-all" disabled={!user?.verified} onClick={pasteAll}>Colar tudo</button>
+              ) : null}
+            </div>
             <TrayRow>
               {trayCards.map((card) => (
                 <button
@@ -541,6 +592,9 @@ export function AlbumPage() {
     </div>
   );
 }
+
+const MAX_FLIGHTS = 12;
+const FLIGHT_STEP = 70; // ms entre um voo e o seguinte no "Colar tudo"
 
 interface Flight {
   finished: Promise<boolean>; // false quando o voo foi cancelado
@@ -585,4 +639,29 @@ function flyToSlot(card: Card, from: DOMRect, delay = 0): Flight {
     ),
     cancel: () => animation.cancel(),
   };
+}
+
+/** No "Colar tudo", a figurinha de outra página voa para dentro do álbum e some. */
+function flyIntoAlbum(card: Card, from: DOMRect, stage: DOMRect, delay: number): Flight {
+  if (lowFx() || !card.image_url) return { finished: Promise.resolve(true), cancel: () => {} };
+  const clone = document.createElement('img');
+  clone.src = card.image_url;
+  clone.className = 'flying';
+  Object.assign(clone.style, { left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px`, opacity: '0' });
+  document.body.append(clone);
+  const dx = stage.left + stage.width / 2 - (from.left + from.width / 2);
+  const dy = stage.top + stage.height / 2 - (from.top + from.height / 2);
+  const animation = clone.animate(
+    [
+      { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+      { transform: `translate(${dx * 0.6}px, ${dy * 0.7 - 20}px) scale(1.15) rotate(-6deg)`, opacity: 1, offset: 0.6 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.35)`, opacity: 0 },
+    ],
+    { duration: 480, delay, easing: 'cubic-bezier(.3,.6,.3,1)', fill: 'backwards' },
+  );
+  const done = (landed: boolean) => {
+    clone.remove();
+    return landed;
+  };
+  return { finished: animation.finished.then(() => done(true), () => done(false)), cancel: () => animation.cancel() };
 }

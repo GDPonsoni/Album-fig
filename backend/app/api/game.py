@@ -35,6 +35,13 @@ def paste(sticker_id: int, user: User = Depends(verified_user), db: Session = De
     return card
 
 
+@router.post("/album/paste-all")
+def paste_all(user: User = Depends(verified_user), db: Session = Depends(get_db)):
+    ids = album.paste_all(db, user)
+    db.commit()
+    return {"pasted": ids}
+
+
 @router.get("/stickers/{sticker_id}/back")
 def back(sticker_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     return album.sticker_back(db, user, sticker_id)

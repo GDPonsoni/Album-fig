@@ -328,6 +328,10 @@ button:disabled { cursor: default; }
 .tray { flex: none; background: var(--navy-deep); padding: 7px 0 8px; border-top: 1px solid rgb(255 255 255 / 0.08); }
 .tray-label { padding: 0 14px 5px; color: #cfd6e6; font-size: 0.8rem; }
 .tray-label b { color: var(--gold); }
+.tray-head { display: flex; align-items: flex-start; gap: 8px; padding-right: 14px; }
+.tray-head .tray-label { flex: 1; min-width: 0; }
+.tray-all { flex: none; padding: 4px 12px; border: 0; border-radius: 999px; background: var(--gold); color: var(--navy-deep); font-size: 0.78rem; font-weight: 800; cursor: pointer; }
+.tray-all:disabled { opacity: 0.5; }
 .tray-empty .tray-label { padding: 6px 14px; text-align: center; }
 .tray-scroller { position: relative; }
 .tray-scroller::before, .tray-scroller::after { content: ''; position: absolute; top: 0; bottom: 0; width: 34px; z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.15s; }

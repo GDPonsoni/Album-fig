@@ -157,6 +157,31 @@ def paste(db: Session, user: User, sticker_id: int) -> Sticker:
     return row.sticker
 
 
+def paste_all(db: Session, user: User) -> list[int]:
+    """Cola tudo o que está na bandeja, com as mesmas regras de `paste`. Idempotente:
+    sem nada para colar, devolve lista vazia."""
+    lock_user(db, user.id)
+    rows = db.scalars(
+        select(UserSticker)
+        .join(Sticker, Sticker.id == UserSticker.sticker_id)
+        .where(
+            UserSticker.user_id == user.id,
+            UserSticker.quantity > 0,
+            UserSticker.pasted.is_(False),
+            Sticker.active.is_(True),
+        )
+        .order_by(Sticker.number)
+    ).all()
+    current = now()
+    for row in rows:
+        row.pasted = True
+        row.pasted_at = current
+    ids = [row.sticker_id for row in rows]
+    if ids:
+        audit(db, user.id, "sticker.paste_all", sticker_ids=ids)
+    return ids
+
+
 def sticker_back(db: Session, user: User, sticker_id: int) -> dict:
     """O verso só existe para quem colou a figurinha."""
     row = db.get(UserSticker, (user.id, sticker_id))
