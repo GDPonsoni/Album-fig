@@ -153,8 +153,18 @@ def page_detail(db: Session, user: User, album: Album | None, org_id: int, page_
     if not stickers:
         raise HTTPException(404, "Página não encontrada.")
     inventory = _inventory(db, user, album.id)
+    layout = chapter.layout or {}
+    page = next((p for p in layout.get("pages", []) if p.get("page_no") == page_no), None) or {}
     return {
         "kind": "mosaic" if is_mosaic else "stickers",
+        # Título, texto e fundo da página e a orientação do capítulo vêm da última revisão publicada.
+        "orientation": layout.get("orientation", "portrait"),
+        "page": {
+            "title": page.get("title", ""),
+            "text": page.get("text", ""),
+            "background_url": page.get("background_url"),
+            "layout": page.get("layout", "free"),
+        },
         "org": {
             "id": org.id,
             "name": org.name,

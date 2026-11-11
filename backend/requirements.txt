@@ -9,6 +9,7 @@ pillow==13.0.0
 boto3==1.43.123
 python-multipart
 pydantic-settings
+pyotp==2.10.0
 # testes
 pytest==9.2.0
 httpx==0.28.1

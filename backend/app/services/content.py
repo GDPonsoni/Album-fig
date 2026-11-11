@@ -6,7 +6,7 @@ from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Album, AlbumChapter, Org, PackOpeningItem, Sticker, TradeOffer, UserSticker
+from app.models import Album, AlbumChapter, Asset, Org, PackOpeningItem, Sticker, TradeOffer, UserSticker
 from app.services.albums import album_status
 from app.services.images import read_media, remove_media, save_webp
 
@@ -40,6 +40,7 @@ def media_in_use(db: Session, url: str | None) -> int:
             (AlbumChapter, AlbumChapter.mosaic_image_url),
             (Org, Org.logo_url),
             (Album, Album.cover_url),
+            (Asset, Asset.url),  # rascunho, revisão guardada ou rollback ainda podem precisar dela
         )
     )
 
@@ -115,3 +116,30 @@ def generate_mosaic(db: Session, chapter: AlbumChapter, cols: int, rows: int, ra
             pieces.append(piece)
     db.flush()
     return pieces
+
+
+def recut_mosaic(db: Session, chapter: AlbumChapter) -> None:
+    """A imagem do mosaico mudou, a grade não: as mesmas peças ganham recortes novos.
+    É a única troca de mosaico permitida com o álbum em andamento (nenhuma figurinha nasce ou some)."""
+    source = read_media(chapter.mosaic_image_url)
+    if source is None:
+        raise ValueError("O capítulo precisa de uma imagem de mosaico enviada ao servidor.")
+    pieces = db.scalars(
+        select(Sticker).where(
+            Sticker.album_id == chapter.album_id, Sticker.org_id == chapter.org_id, Sticker.is_mosaic_piece.is_(True)
+        )
+    ).all()
+    cols, rows = chapter.mosaic_cols, chapter.mosaic_rows
+    old_images = []
+    with Image.open(io.BytesIO(source)) as image:
+        image = image.convert("RGBA")
+        width, height = image.width / cols, image.height / rows
+        for piece in pieces:
+            index = piece.mosaic_index or 0
+            col, row = index % cols, index // cols
+            crop = image.crop((round(col * width), round(row * height), round((col + 1) * width), round((row + 1) * height)))
+            old_images.append(piece.image_url)
+            piece.image_url = save_webp(crop, f"orgs/{chapter.org.name}/pecas/peca {index + 1:02d}", 500)
+    db.flush()
+    for url in old_images:
+        remove_media_if_unused(db, url)

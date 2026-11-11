@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import User, UserSession
+from app.models import AlbumChapter, RoleGrant, User, UserSession
+from app.services import mfa
 from app.services.core import now
 from app.settings import settings
 
@@ -60,3 +61,45 @@ def admin_user(user: User = Depends(current_user)) -> User:
     if not user.is_admin:
         raise HTTPException(403, "Acesso restrito.")
     return user
+
+
+def current_session(request: Request, db: Session = Depends(get_db)) -> UserSession:
+    token = request.cookies.get(SESSION_COOKIE)
+    session = db.get(UserSession, hash_token(token)) if token else None
+    if session is None or session.expires_at <= now():
+        raise HTTPException(401, "Entre na sua conta para continuar.")
+    return session
+
+
+def admin_mfa(user: User = Depends(admin_user), session: UserSession = Depends(current_session)) -> User:
+    """Superadmin com o segundo fator ativo e confirmado há pouco nesta sessão. O cabeçalho
+    `X-MFA` diz ao front se falta ativar (`setup`) ou só confirmar o código (`verify`)."""
+    if not mfa.is_enabled(user):
+        raise HTTPException(403, mfa.SETUP_REQUIRED, headers={"X-MFA": "setup"})
+    if not mfa.is_fresh(session):
+        raise HTTPException(403, mfa.VERIFY_REQUIRED, headers={"X-MFA": "verify"})
+    return user
+
+
+def active_grant(db: Session, user_id: int, chapter_id: int) -> RoleGrant | None:
+    return db.scalar(
+        select(RoleGrant).where(
+            RoleGrant.user_id == user_id,
+            RoleGrant.chapter_id == chapter_id,
+            RoleGrant.role == "editor",
+            RoleGrant.revoked_at.is_(None),
+            (RoleGrant.expires_at.is_(None)) | (RoleGrant.expires_at > now()),
+        )
+    )
+
+
+def require_chapter_editor(
+    chapter_id: int, user: User = Depends(verified_user), db: Session = Depends(get_db)
+) -> AlbumChapter:
+    """Editor do capítulo. Consulta o banco a cada requisição (nada fica guardado na sessão),
+    então revogar ou expirar vale na requisição seguinte. Quem não tem o papel recebe a mesma
+    404 de capítulo inexistente: não dá para descobrir quais capítulos existem."""
+    chapter = db.get(AlbumChapter, chapter_id)
+    if chapter is None or active_grant(db, user.id, chapter_id) is None:
+        raise HTTPException(404, "Capítulo não encontrado.")
+    return chapter

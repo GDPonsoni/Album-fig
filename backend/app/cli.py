@@ -22,7 +22,7 @@ from app.models import (
     UserSticker,
 )
 from app.seed import seed_demo
-from app.services import albums
+from app.services import albums, mfa
 
 
 def create_admin(email: str, nickname: str) -> None:
@@ -122,6 +122,19 @@ def close_albums() -> None:
     print(f"Álbuns fechados agora: {closed or 'nenhum'}. Trocas expiradas: {len(expired)}.")
 
 
+def reset_2fa(email: str) -> None:
+    """Para quem perdeu o celular e os códigos de recuperação: desliga o segundo fator da conta.
+    Só roda com acesso ao servidor; a pessoa ativa de novo na página Conta."""
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == email.strip().lower()))
+        if user is None:
+            sys.exit("Conta não encontrada.")
+        mfa.disable(db, user)
+        db.add(AuditLog(user_id=user.id, action="mfa.reset_cli", payload={}))
+        db.commit()
+    print(f"Verificação em duas etapas desligada para {email}. Peça para a pessoa ativar de novo na página Conta.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -142,6 +155,8 @@ def main() -> None:
     album.add_argument("--from-album", type=int, help="copia capítulos, figurinhas, pacotes e parâmetros deste álbum")
     album.add_argument("--ready", action="store_true", help="já marca como pronto (entra no ar na data de início)")
     commands.add_parser("close-albums", help="fecha os álbuns que já acabaram (trocas expiram, resumo final é gravado)")
+    reset = commands.add_parser("reset-2fa", help="desliga a verificação em duas etapas de uma conta")
+    reset.add_argument("email")
     args = parser.parse_args()
 
     if args.command == "seed-demo":
@@ -154,6 +169,8 @@ def main() -> None:
         create_album(args.title, args.starts_at, args.ends_at, args.university, args.from_album, args.ready)
     elif args.command == "close-albums":
         close_albums()
+    elif args.command == "reset-2fa":
+        reset_2fa(args.email)
 
 
 if __name__ == "__main__":

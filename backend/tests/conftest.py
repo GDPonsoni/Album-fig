@@ -133,7 +133,10 @@ def add_content(db, album: Album, org_name: str = "Org Teste") -> list[Sticker]:
     db.add(AlbumChapter(album_id=album.id, org_id=org.id))
     rarities = {r.name: r for r in db.query(Rarity)}
     stickers = []
-    for number, name in enumerate(["comum"] * 10 + ["rara"] * 5 + ["lendária"] * 2, start=1):
+    from sqlalchemy import func, select
+
+    first = (db.scalar(select(func.max(Sticker.number)).where(Sticker.album_id == album.id)) or 0) + 1
+    for number, name in enumerate(["comum"] * 10 + ["rara"] * 5 + ["lendária"] * 2, start=first):
         sticker = Sticker(
             album_id=album.id,
             org_id=org.id,
@@ -149,6 +152,27 @@ def add_content(db, album: Album, org_name: str = "Org Teste") -> list[Sticker]:
         stickers.append(sticker)
     db.commit()
     return stickers
+
+
+@pytest.fixture
+def mfa_login(db, login):
+    """Loga um superadmin já com o segundo fator ativo e confirmado nesta sessão."""
+    import pyotp
+
+    from app.models import UserSession
+
+    def factory(user: User, fresh: bool = True) -> TestClient:
+        row = db.get(User, user.id)
+        row.totp_secret = pyotp.random_base32()
+        row.totp_enabled_at = now()
+        db.commit()
+        client = login(user)
+        if fresh:
+            db.execute(UserSession.__table__.update().where(UserSession.user_id == user.id).values(mfa_at=now()))
+            db.commit()
+        return client
+
+    return factory
 
 
 @pytest.fixture

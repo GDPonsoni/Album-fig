@@ -10,9 +10,10 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import SESSION_COOKIE, current_user, hash_token, start_session
+from app.api.deps import SESSION_COOKIE, admin_user, current_session, current_user, hash_token, start_session
 from app.db import get_db
-from app.models import EmailToken, User, UserSession
+from app.models import EmailToken, RoleGrant, User, UserSession
+from app.services import mfa
 from app.services.albums import default_university
 from app.services.core import audit, enforce_rate, now
 from app.services.mail import send_mail
@@ -94,13 +95,15 @@ def _consume_token(db: Session, token: str, kind: str) -> EmailToken:
     return row
 
 
-def user_view(user: User) -> dict:
+def user_view(user: User, session: UserSession | None = None) -> dict:
     return {
         "id": user.id,
         "email": user.email,
         "nickname": user.nickname,
         "verified": user.email_verified_at is not None,
         "is_admin": user.is_admin,
+        "mfa_enabled": mfa.is_enabled(user),
+        "mfa_verified": mfa.is_fresh(session),
     }
 
 
@@ -218,6 +221,71 @@ me_router = APIRouter(tags=["auth"])
 
 
 @me_router.get("/me")
-def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def me(user: User = Depends(current_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)):
     refill_drawer(db, user)
-    return user_view(user)
+    view = user_view(user, session)
+    # Quantos capítulos a pessoa edita agora: é o que faz a área do editor aparecer.
+    view["editor_chapters"] = db.scalar(
+        select(func.count()).select_from(RoleGrant).where(
+            RoleGrant.user_id == user.id, RoleGrant.revoked_at.is_(None),
+            (RoleGrant.expires_at.is_(None)) | (RoleGrant.expires_at > now()),
+        )
+    ) or 0
+    return view
+
+
+# ---- Verificação em duas etapas (superadmin)
+class PasswordIn(BaseModel):
+    password: str = Field(max_length=128)
+
+
+class CodeIn(BaseModel):
+    code: str = Field(min_length=6, max_length=20)
+
+
+def _check_password(user: User, password: str) -> None:
+    try:
+        hasher.verify(user.password_hash, password)
+    except (VerificationError, InvalidHashError) as exc:
+        raise HTTPException(403, "Senha incorreta.") from exc
+
+
+@router.post("/2fa/setup")
+def mfa_setup(body: PasswordIn, user: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Gera o segredo para o app autenticador. Pede a senha: sessão aberta sozinha não basta."""
+    _check_password(user, body.password)
+    data = mfa.begin_setup(db, user)
+    db.commit()
+    return data
+
+
+@router.post("/2fa/enable")
+def mfa_enable(
+    body: CodeIn, user: User = Depends(admin_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
+):
+    codes = mfa.enable(db, user, session, body.code)
+    db.commit()
+    return {"recovery_codes": codes}
+
+
+@router.post("/2fa/verify")
+def mfa_verify(
+    body: CodeIn, user: User = Depends(admin_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
+):
+    method = mfa.verify(db, user, session, body.code)
+    left = mfa.recovery_left(db, user)
+    db.commit()
+    return {"ok": True, "method": method, "recovery_codes_left": left}
+
+
+@router.post("/2fa/disable")
+def mfa_disable(
+    body: PasswordIn, user: User = Depends(admin_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
+):
+    """Desligar pede a senha e o segundo fator confirmado nesta sessão."""
+    _check_password(user, body.password)
+    if mfa.is_enabled(user) and not mfa.is_fresh(session):
+        raise HTTPException(403, mfa.VERIFY_REQUIRED, headers={"X-MFA": "verify"})
+    mfa.disable(db, user)
+    db.commit()
+    return {"ok": True}

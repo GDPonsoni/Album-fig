@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, datetime
 from typing import Any
 
@@ -72,6 +73,10 @@ class User(Base):
     nickname: Mapped[str] = mapped_column(String(20))
     phone: Mapped[str | None] = mapped_column(String(30))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Verificação em duas etapas (TOTP). Só vale depois de confirmada (`totp_enabled_at`).
+    totp_secret: Mapped[str | None] = mapped_column(String(64))
+    totp_enabled_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger)  # último passo aceito: código não vale duas vezes
     created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
 
     __table_args__ = (Index("uq_user_nickname_ci", func.lower(nickname), unique=True),)
@@ -83,6 +88,18 @@ class UserSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
     expires_at: Mapped[datetime] = mapped_column(Timestamp)
+    mfa_at: Mapped[datetime | None] = mapped_column(Timestamp)  # quando esta sessão confirmou o segundo fator
+
+
+class RecoveryCode(Base):
+    """Código de recuperação do 2FA. Só o hash é guardado; cada um vale uma vez."""
+
+    __tablename__ = "recovery_code"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    used_at: Mapped[datetime | None] = mapped_column(Timestamp)
 
 
 class EmailToken(Base):
@@ -128,6 +145,11 @@ class AlbumChapter(Base):
     mosaic_image_url: Mapped[str | None] = mapped_column(String(500))
     mosaic_cols: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     mosaic_rows: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    # Publicado por revisão: {"orientation": "portrait|landscape", "pages": [{page_no, title, text, background_url, layout}]}
+    layout: Mapped[dict[str, Any]] = mapped_column(Json, default=dict, server_default="{}")
+    published_revision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chapter_revision.id", ondelete="SET NULL", use_alter=True, name="album_chapter_published_revision_id_fkey")
+    )
 
     org: Mapped[Org] = relationship(lazy="joined")
 
@@ -174,6 +196,8 @@ class Sticker(Base):
     album_id: Mapped[int] = mapped_column(ForeignKey("album.id", ondelete="RESTRICT"), index=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("org.id", ondelete="RESTRICT"), index=True)
     number: Mapped[int] = mapped_column(Integer)  # único dentro do álbum
+    # Identidade estável da figurinha no conteúdo do editor: liga `stickers[].key` da revisão à linha de produção.
+    content_key: Mapped[str] = mapped_column(String(36), default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(120))
     image_url: Mapped[str | None] = mapped_column(String(500))
     size: Mapped[str] = mapped_column(_enum("P", "M", "G", name="sticker_size"), default="P")
@@ -191,7 +215,10 @@ class Sticker(Base):
     rarity: Mapped[Rarity] = relationship(lazy="joined")
     org: Mapped[Org] = relationship(lazy="joined")
 
-    __table_args__ = (UniqueConstraint("album_id", "number", name="uq_sticker_album_number"),)
+    __table_args__ = (
+        UniqueConstraint("album_id", "number", name="uq_sticker_album_number"),
+        UniqueConstraint("album_id", "content_key", name="uq_sticker_album_content_key"),
+    )
 
 
 class PackType(Base):
@@ -321,3 +348,72 @@ class Config(Base):
 
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[Any] = mapped_column(Json)
+
+
+class RoleGrant(Base):
+    """Papel de editor num capítulo. Conferido no banco a cada requisição: revogar vale na hora."""
+
+    __tablename__ = "role_grant"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    chapter_id: Mapped[int] = mapped_column(ForeignKey("album_chapter.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(_enum("editor", name="role_grant_role"), default="editor")
+    granted_by: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
+    granted_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    revoked_at: Mapped[datetime | None] = mapped_column(Timestamp)
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id], lazy="joined")
+
+
+class ChapterRevision(Base):
+    """Proposta de conteúdo de um capítulo. É a única coisa (com `asset`) que o editor escreve;
+    só a publicação pelo superadmin leva o `content` para as tabelas de produção."""
+
+    __tablename__ = "chapter_revision"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    chapter_id: Mapped[int] = mapped_column(ForeignKey("album_chapter.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(
+        _enum("draft", "submitted", "approved", "rejected", "published", "superseded", name="chapter_revision_status"),
+        default="draft",
+    )
+    content: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
+    submitted_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    review_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    base_published_revision_id: Mapped[int | None] = mapped_column(ForeignKey("chapter_revision.id", ondelete="SET NULL"))
+    published_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    # O que estava em produção logo antes desta publicação: é o que o rollback reaplica.
+    previous_content: Mapped[dict[str, Any] | None] = mapped_column(Json)
+
+    __table_args__ = (
+        UniqueConstraint("chapter_id", "number", name="uq_chapter_revision_number"),
+        # Uma revisão em aberto por capítulo (rascunho, enviada, aprovada ou rejeitada aguardando ajuste).
+        Index(
+            "uq_chapter_revision_open", "chapter_id", unique=True,
+            postgresql_where=text("status IN ('draft', 'submitted', 'approved', 'rejected')"),
+        ),
+    )
+
+
+class Asset(Base):
+    """Imagem enviada por um editor. Fica privada (`pending`) até a publicação."""
+
+    __tablename__ = "asset"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    chapter_id: Mapped[int] = mapped_column(ForeignKey("album_chapter.id", ondelete="CASCADE"), index=True)
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
+    key: Mapped[str] = mapped_column(String(300))
+    url: Mapped[str] = mapped_column(String(500), index=True)  # álbum duplicado compartilha a imagem: não é único
+    kind: Mapped[str] = mapped_column(String(20), default="sticker", server_default="sticker")
+    bytes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(_enum("pending", "approved", name="asset_status"), default="pending")
+    created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
