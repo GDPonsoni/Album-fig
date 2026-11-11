@@ -103,6 +103,19 @@ def open_pack(grant_id: int, user: User = Depends(verified_user), db: Session = 
     return payload
 
 
+@router.get("/codes/preview")
+def preview_code(
+    code: str = Query(max_length=60), user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    """Só mostra o que o código vale. Resgatar é sempre POST: um GET pode ser
+    disparado por prévia de link ou robô e não pode consumir o código."""
+    row = codes.preview(db, user, code)
+    return {
+        "code": row.code,
+        "pack": {"name": row.pack_type.name, "slug": row.pack_type.slug, "stickers_per_pack": row.pack_type.stickers_per_pack},
+    }
+
+
 @router.post("/codes/redeem")
 def redeem(body: RedeemIn, user: User = Depends(verified_user), db: Session = Depends(get_db)):
     grant = codes.redeem(db, user, body.code)

@@ -11,6 +11,7 @@ import { AccountPage } from './pages/Account';
 import { AlbumPage } from './pages/Album';
 import { ConfirmPage, ForgotPage, LoginPage, RegisterPage, ResetPage } from './pages/Auth';
 import { PacksPage } from './pages/Packs';
+import { RedeemLinkPage } from './pages/Redeem';
 import { TradeHome, TradeSession } from './pages/Trade';
 import './styles.css';
 
@@ -51,6 +52,7 @@ createRoot(document.getElementById('root')!).render(
           >
             <Route path="/" element={<AlbumPage />} />
             <Route path="/pacotes" element={<PacksPage />} />
+            <Route path="/r/:codigo" element={<RedeemLinkPage />} />
             <Route path="/trocar" element={<TradeHome />} />
             <Route path="/trocar/:token" element={<TradeSession />} />
             <Route path="/conta" element={<AccountPage />} />

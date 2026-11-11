@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { post } from '../api';
-import { useAuth } from '../auth';
+import { storedNext, useAuth } from '../auth';
 import { Message } from '../components/ui';
 
 function AuthFrame({ title, children, footer }: { title: string; children: ReactNode; footer?: ReactNode }) {
@@ -52,7 +52,7 @@ function Field(props: { label: string; value: string; onChange: (v: string) => v
 export function LoginPage() {
   const { user, refresh } = useAuth();
   const location = useLocation();
-  const next = (location.state as { next?: string } | null)?.next ?? '/';
+  const next = (location.state as { next?: string } | null)?.next ?? storedNext() ?? '/';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { error, busy, onSubmit } = useSubmit(async () => {
@@ -114,6 +114,7 @@ export function ConfirmPage() {
   const { refresh } = useAuth();
   const [state, setState] = useState<{ ok?: string; error?: string }>({});
   const sent = useRef(false);
+  const [next] = useState(storedNext);
   useEffect(() => {
     if (sent.current) return;
     sent.current = true;
@@ -125,7 +126,7 @@ export function ConfirmPage() {
       .catch((error) => setState({ error: error.message }));
   }, [params, refresh]);
   return (
-    <AuthFrame title="Confirmação de e-mail" footer={<Link to="/">Ir para o álbum</Link>}>
+    <AuthFrame title="Confirmação de e-mail" footer={next ? <Link to={next}>Continuar de onde parei</Link> : <Link to="/">Ir para o álbum</Link>}>
       {state.ok ? <Message kind="ok">{state.ok} Seus pacotes já estão esperando.</Message> : null}
       {state.error ? <Message>{state.error}</Message> : null}
       {!state.ok && !state.error ? <p>Confirmando…</p> : null}

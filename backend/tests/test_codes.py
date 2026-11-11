@@ -115,3 +115,57 @@ def test_admin_edita_peca_de_mosaico(db, content, make_user, login):
     body = {"org_id": piece.org_id, "name": "Peça nova", "rarity_id": piece.rarity_id, "page_no": 0, "number": piece.number}
     assert admin.put(f"/api/admin/stickers/{piece.id}", json=body).status_code == 200
     assert admin.post("/api/admin/stickers", json={**body, "number": 500}).status_code == 400
+
+
+def preview(client, code):
+    return client.get("/api/codes/preview", params={"code": code})
+
+
+def test_previa_nao_consome_e_post_consome_uma_vez(db, make_user, login):
+    user = make_user("Qr")
+    client = login(user)
+    code = _code(db)
+    for _ in range(3):
+        body = preview(client, code.lower())
+        assert body.status_code == 200
+        assert body.json()["code"] == code and body.json()["pack"]["slug"] == "premium"
+    db.expire_all()
+    row = db.scalar(select(RedeemCode).where(RedeemCode.code == code))
+    assert row.redeemed_at is None and row.redeemed_by is None
+    assert db.scalars(select(PackGrant).where(PackGrant.source == "code")).all() == []
+
+    assert redeem(client, code).status_code == 200
+    assert redeem(client, code).status_code == 400
+    assert preview(client, code).status_code == 400
+    assert len(db.scalars(select(PackGrant).where(PackGrant.source == "code")).all()) == 1
+
+
+def test_resgate_nao_existe_por_get(db, make_user, login):
+    client = login(make_user("Get"))
+    code = _code(db)
+    assert client.get("/api/codes/redeem", params={"code": code}).status_code in (404, 405)
+    db.expire_all()
+    assert db.scalar(select(RedeemCode).where(RedeemCode.code == code)).redeemed_at is None
+
+
+def test_previa_invalida_e_generica_e_divide_o_limite_com_o_resgate(db, make_user, login):
+    client = login(make_user("Orac"))
+    used = _code(db)
+    redeem(client, used)
+    expired = _code(db, expires_at=now() - timedelta(hours=1))
+    answers = {(r.status_code, r.text) for r in (preview(client, v) for v in (used, expired, "NAO-EXISTE"))}
+    assert answers == {(400, '{"detail":"Código inválido."}')}
+    for _ in range(7):
+        assert preview(client, "ERRADO").status_code == 400
+    valid = _code(db)
+    # 10 erros na hora: prévia e resgate bloqueiam, mesmo para código válido.
+    assert preview(client, valid).status_code == 429
+    assert redeem(client, valid).status_code == 429
+
+
+def test_previa_exige_login(db):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    assert TestClient(app).get("/api/codes/preview", params={"code": _code(db)}).status_code == 401

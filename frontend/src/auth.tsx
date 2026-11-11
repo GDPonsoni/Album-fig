@@ -37,11 +37,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export const useAuth = () => useContext(AuthContext);
 
+// Destino guardado enquanto a pessoa entra ou confirma o e-mail (o link de confirmação
+// abre em outra aba, então o estado da navegação não basta). Só caminhos internos.
+const NEXT_KEY = 'album.next';
+const internal = (path: string | null | undefined): path is string => !!path && path.startsWith('/') && !path.startsWith('//');
+
+export function rememberNext(path: string) {
+  try {
+    if (internal(path) && path !== '/') localStorage.setItem(NEXT_KEY, path);
+  } catch {
+    // Sem armazenamento (modo privado): o destino só vale nesta navegação.
+  }
+}
+
+export function storedNext(): string | null {
+  try {
+    const path = localStorage.getItem(NEXT_KEY);
+    return internal(path) ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearNext() {
+  try {
+    localStorage.removeItem(NEXT_KEY);
+  } catch {
+    // Nada a limpar.
+  }
+}
+
 export function RequireAuth({ children, admin }: { children: ReactNode; admin?: boolean }) {
   const { user } = useAuth();
   const location = useLocation();
+  const here = location.pathname + location.search;
+  useEffect(() => {
+    // Chegou ao destino guardado: ele não deve valer para um login futuro.
+    if (user && storedNext() === here) clearNext();
+  }, [user, here]);
   if (user === undefined) return <Splash />;
-  if (user === null) return <Navigate to="/entrar" replace state={{ next: location.pathname + location.search }} />;
+  if (user === null) {
+    rememberNext(here);
+    return <Navigate to="/entrar" replace state={{ next: here }} />;
+  }
   if (admin && !user.is_admin) return <Navigate to="/" replace />;
   return <>{children}</>;
 }

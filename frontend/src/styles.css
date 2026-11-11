@@ -584,3 +584,23 @@ button:disabled { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Link de resgate (QR dos códigos) */
+.redeem-link { display: flex; flex-direction: column; gap: 12px; text-align: center; }
+.redeem-code { font: 800 1.25rem ui-monospace, monospace; letter-spacing: 0.06em; overflow-wrap: anywhere; }
+
+/* Folha de códigos com QR (admin) */
+.code-sheet { display: flex; flex-direction: column; gap: 12px; }
+.code-sheet-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.code-sheet-bar strong { flex: 1; min-width: 160px; }
+.code-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.code-cards li { display: flex; align-items: center; gap: 10px; padding: 10px; background: #fff; color: #000; border: 1px dashed #777; border-radius: 8px; break-inside: avoid; }
+.code-cards img, .code-cards i { flex: none; width: 96px; height: 96px; }
+.code-cards div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.code-cards code { font: 800 0.95rem ui-monospace, monospace; overflow-wrap: anywhere; }
+.code-cards small, .code-cards span { font-size: 0.72rem; color: #333; }
+@media print {
+  body.printing-codes .admin-top, body.printing-codes .admin-tabs, body.printing-codes .code-sheet-bar { display: none; }
+  body.printing-codes, body.printing-codes .admin { background: #fff; padding: 0; max-width: none; }
+  body.printing-codes .code-cards { grid-template-columns: repeat(2, 1fr); }
+}

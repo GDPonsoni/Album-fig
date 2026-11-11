@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, post } from '../api';
@@ -185,7 +186,48 @@ function Metrics() {
   );
 }
 
+/** Folha imprimível: um cartão por código, com o QR do link de resgate e o texto ao lado. */
+function CodeSheet({ codes, onClose }: { codes: { code: string; label: string }[]; onClose: () => void }) {
+  const [images, setImages] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    Promise.all(
+      codes.map(async ({ code }) => [code, await QRCode.toDataURL(`${window.location.origin}/r/${code}`, { width: 240, margin: 1 })] as const),
+    ).then((pairs) => alive && setImages(Object.fromEntries(pairs)));
+    return () => {
+      alive = false;
+    };
+  }, [codes]);
+  useEffect(() => {
+    document.body.classList.add('printing-codes');
+    return () => document.body.classList.remove('printing-codes');
+  }, []);
+  const ready = Object.keys(images).length === codes.length;
+  return (
+    <div className="code-sheet">
+      <div className="code-sheet-bar">
+        <strong>{codes.length} {codes.length === 1 ? 'código' : 'códigos'} para imprimir</strong>
+        <button className="btn btn-primary" disabled={!ready} onClick={() => window.print()}>Imprimir</button>
+        <button className="btn" onClick={onClose}>Fechar</button>
+      </div>
+      <ul className="code-cards">
+        {codes.map(({ code, label }) => (
+          <li key={code}>
+            {images[code] ? <img src={images[code]} alt={`QR do código ${code}`} /> : <i />}
+            <div>
+              <small>Aponte a câmera ou digite no app</small>
+              <code>{code}</code>
+              {label ? <span>{label}</span> : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function Codes() {
+  const [sheet, setSheet] = useState<{ code: string; label: string }[] | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [form, setForm] = useState<Row>({ pack_type_id: null, label: '', count: 10, expires_at: '' });
   const [error, setError] = useState('');
@@ -198,12 +240,15 @@ function Codes() {
     event.preventDefault();
     setError('');
     try {
-      await post('/admin/codes', { ...form, expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null });
+      const created = await post<{ codes: string[] }>('/admin/codes', { ...form, expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null });
       load();
+      setSheet(created.codes.map((code) => ({ code, label: form.label })));
     } catch (e) {
       setError((e as Error).message);
     }
   };
+  const available = rows.filter((row) => !row.redeemed_by).map((row) => ({ code: row.code as string, label: (row.label as string) || '' }));
+  if (sheet) return <CodeSheet codes={sheet} onClose={() => setSheet(null)} />;
   return (
     <section>
       <h2>Gerar lote de códigos</h2>
@@ -215,7 +260,10 @@ function Codes() {
         <div className="admin-actions"><button className="btn btn-primary">Gerar</button></div>
       </form>
       <Message>{error}</Message>
-      <h3>Códigos ({rows.length})</h3>
+      <div className="admin-head">
+        <h3>Códigos ({rows.length})</h3>
+        {available.length ? <button className="btn" onClick={() => setSheet(available)}>Imprimir disponíveis com QR ({available.length})</button> : null}
+      </div>
       <ul className="admin-list codes">
         {rows.map((row) => (
           <li key={row.id}>

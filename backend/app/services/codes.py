@@ -1,7 +1,7 @@
 import secrets
 
 from fastapi import HTTPException
-from sqlalchemy import or_, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models import PackGrant, RedeemCode, User
@@ -23,10 +23,37 @@ def normalize_code(value: str) -> str:
     return "-".join(raw[i : i + 4] for i in range(0, len(raw), 4))
 
 
-def redeem(db: Session, user: User, value: str) -> PackGrant:
-    key = f"code-error:{user.id}"
-    if rate_limited(db, key, cfg(db, "code.max_errors_per_hour"), 3600):
+def _error_key(user: User) -> str:
+    return f"code-error:{user.id}"
+
+
+def _check_error_limit(db: Session, user: User) -> None:
+    if rate_limited(db, _error_key(user), cfg(db, "code.max_errors_per_hour"), 3600):
         raise HTTPException(429, "Muitas tentativas erradas. Tente de novo mais tarde.")
+
+
+def preview(db: Session, user: User, value: str) -> RedeemCode:
+    """Consulta sem efeito sobre o código (é o que o link do QR abre). Divide o limite
+    de erros com o resgate, para não servir de oráculo para adivinhar códigos."""
+    _check_error_limit(db, user)
+    current = now()
+    row = db.scalar(
+        select(RedeemCode).where(
+            RedeemCode.code == normalize_code(value),
+            RedeemCode.redeemed_at.is_(None),
+            or_(RedeemCode.expires_at.is_(None), RedeemCode.expires_at > current),
+        )
+    )
+    if row is None:
+        record_hit(db, _error_key(user))
+        db.commit()
+        raise HTTPException(400, INVALID)
+    return row
+
+
+def redeem(db: Session, user: User, value: str) -> PackGrant:
+    key = _error_key(user)
+    _check_error_limit(db, user)
 
     # O UPDATE condicional é o que garante o uso único sob concorrência.
     current = now()
