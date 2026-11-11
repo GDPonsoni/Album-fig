@@ -2,7 +2,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Org, Sticker, User, UserSticker
+from app.models import Album, AlbumChapter, Sticker, User, UserSticker
+from app.services.albums import album_status, album_view, require_live, require_same_album
 from app.services.core import audit, lock_user, now
 
 
@@ -24,22 +25,38 @@ def sticker_card(sticker: Sticker) -> dict:
     }
 
 
-def _inventory(db: Session, user: User) -> dict[int, UserSticker]:
-    rows = db.scalars(select(UserSticker).where(UserSticker.user_id == user.id, UserSticker.quantity > 0))
+def _inventory(db: Session, user: User, album_id: int) -> dict[int, UserSticker]:
+    """Só o que o usuário tem NESTE álbum: nada de um álbum aparece em outro."""
+    rows = db.scalars(
+        select(UserSticker)
+        .join(Sticker, Sticker.id == UserSticker.sticker_id)
+        .where(UserSticker.user_id == user.id, UserSticker.quantity > 0, Sticker.album_id == album_id)
+    )
     return {row.sticker_id: row for row in rows}
 
 
-def album_index(db: Session, user: User) -> dict:
-    orgs = db.scalars(select(Org).order_by(Org.sort_order, Org.id)).all()
-    stickers = db.execute(
-        select(Sticker.id, Sticker.org_id, Sticker.page_no, Sticker.is_mosaic_piece).where(Sticker.active.is_(True))
+EMPTY_INDEX = {"album": None, "read_only": True, "pages": [], "orgs": [], "total": 0, "filled": 0, "tray": []}
+
+
+def album_index(db: Session, user: User, album: Album | None) -> dict:
+    """Capa, páginas e bandeja de um álbum. Fora do período de jogo o álbum é só leitura (sem bandeja)."""
+    if album is None:
+        return dict(EMPTY_INDEX)
+    chapters = db.scalars(
+        select(AlbumChapter).where(AlbumChapter.album_id == album.id).order_by(AlbumChapter.sort_order, AlbumChapter.id)
     ).all()
-    inventory = _inventory(db, user)
+    stickers = db.execute(
+        select(Sticker.id, Sticker.org_id, Sticker.page_no, Sticker.is_mosaic_piece).where(
+            Sticker.album_id == album.id, Sticker.active.is_(True)
+        )
+    ).all()
+    inventory = _inventory(db, user, album.id)
     pasted = {sid for sid, row in inventory.items() if row.pasted}
 
     pages = []
     org_rows = []
-    for org in orgs:
+    for chapter in chapters:
+        org = chapter.org
         own = [s for s in stickers if s.org_id == org.id]
         if not own:
             continue
@@ -82,17 +99,20 @@ def album_index(db: Session, user: User) -> dict:
 
     total = len(stickers)
     active_ids = {s.id for s in stickers}
+    read_only = album_status(album) != "active"
     return {
+        "album": album_view(album),
+        "read_only": read_only,
         "pages": pages,
         "orgs": org_rows,
         "total": total,
         "filled": len(pasted & active_ids),
-        "tray": tray(db, user, inventory),
+        "tray": [] if read_only else tray(db, user, album.id, inventory),
     }
 
 
-def tray(db: Session, user: User, inventory: dict[int, UserSticker] | None = None) -> list[dict]:
-    rows = inventory if inventory is not None else _inventory(db, user)
+def tray(db: Session, user: User, album_id: int, inventory: dict[int, UserSticker] | None = None) -> list[dict]:
+    rows = inventory if inventory is not None else _inventory(db, user, album_id)
     items = [row.sticker for row in rows.values() if not row.pasted and row.sticker.active]
     return [sticker_card(s) for s in sorted(items, key=lambda s: s.number)]
 
@@ -112,21 +132,27 @@ def _slot(sticker: Sticker, row: UserSticker | None) -> dict:
     return slot
 
 
-def page_detail(db: Session, user: User, org_id: int, page_no: int) -> dict:
-    """page_no 0 é a página de mosaico da org."""
-    org = db.get(Org, org_id)
-    if org is None:
+def page_detail(db: Session, user: User, album: Album | None, org_id: int, page_no: int) -> dict:
+    """page_no 0 é a página de mosaico do capítulo."""
+    chapter = None
+    if album is not None:
+        chapter = db.scalar(select(AlbumChapter).where(AlbumChapter.album_id == album.id, AlbumChapter.org_id == org_id))
+    if album is None or chapter is None:
         raise HTTPException(404, "Página não encontrada.")
+    org = chapter.org
     is_mosaic = page_no == 0
     query = select(Sticker).where(
-        Sticker.org_id == org_id, Sticker.active.is_(True), Sticker.is_mosaic_piece.is_(is_mosaic)
+        Sticker.album_id == album.id,
+        Sticker.org_id == org_id,
+        Sticker.active.is_(True),
+        Sticker.is_mosaic_piece.is_(is_mosaic),
     )
     if not is_mosaic:
         query = query.where(Sticker.page_no == page_no)
     stickers = db.scalars(query.order_by(Sticker.mosaic_index if is_mosaic else Sticker.number)).all()
     if not stickers:
         raise HTTPException(404, "Página não encontrada.")
-    inventory = _inventory(db, user)
+    inventory = _inventory(db, user, album.id)
     return {
         "kind": "mosaic" if is_mosaic else "stickers",
         "org": {
@@ -135,9 +161,9 @@ def page_detail(db: Session, user: User, org_id: int, page_no: int) -> dict:
             "description": org.description,
             "logo_url": org.logo_url,
             "color": org.theme_color,
-            "mosaic_image_url": org.mosaic_image_url if is_mosaic else None,
-            "mosaic_cols": org.mosaic_cols,
-            "mosaic_rows": org.mosaic_rows,
+            "mosaic_image_url": chapter.mosaic_image_url if is_mosaic else None,
+            "mosaic_cols": chapter.mosaic_cols,
+            "mosaic_rows": chapter.mosaic_rows,
         },
         "page_no": page_no,
         "slots": [_slot(s, inventory.get(s.id)) for s in stickers],
@@ -145,21 +171,24 @@ def page_detail(db: Session, user: User, org_id: int, page_no: int) -> dict:
 
 
 def paste(db: Session, user: User, sticker_id: int) -> Sticker:
+    album = require_live(db, user)
     lock_user(db, user.id)
     row = db.get(UserSticker, (user.id, sticker_id))
     if row is None or row.quantity < 1:
         raise HTTPException(404, "Você não tem esta figurinha.")
+    require_same_album(album, row.sticker.album_id)
     if row.pasted:
         raise HTTPException(409, "Esta figurinha já está colada.")
     row.pasted = True
     row.pasted_at = now()
-    audit(db, user.id, "sticker.paste", sticker_id=sticker_id)
+    audit(db, user.id, "sticker.paste", sticker_id=sticker_id, album_id=album.id)
     return row.sticker
 
 
 def paste_all(db: Session, user: User) -> list[int]:
-    """Cola tudo o que está na bandeja, com as mesmas regras de `paste`. Idempotente:
-    sem nada para colar, devolve lista vazia."""
+    """Cola tudo o que está na bandeja do álbum em andamento, com as mesmas regras de
+    `paste`. Idempotente: sem nada para colar, devolve lista vazia."""
+    album = require_live(db, user)
     lock_user(db, user.id)
     rows = db.scalars(
         select(UserSticker)
@@ -168,6 +197,7 @@ def paste_all(db: Session, user: User) -> list[int]:
             UserSticker.user_id == user.id,
             UserSticker.quantity > 0,
             UserSticker.pasted.is_(False),
+            Sticker.album_id == album.id,
             Sticker.active.is_(True),
         )
         .order_by(Sticker.number)
@@ -178,7 +208,7 @@ def paste_all(db: Session, user: User) -> list[int]:
         row.pasted_at = current
     ids = [row.sticker_id for row in rows]
     if ids:
-        audit(db, user.id, "sticker.paste_all", sticker_ids=ids)
+        audit(db, user.id, "sticker.paste_all", sticker_ids=ids, album_id=album.id)
     return ids
 
 
@@ -191,8 +221,10 @@ def sticker_back(db: Session, user: User, sticker_id: int) -> dict:
     return {**sticker_card(sticker), "back_text": sticker.back_text, "back_links": sticker.back_links}
 
 
-def duplicates(db: Session, user: User) -> list[dict]:
-    """Repetidas: tudo além do exemplar que fica reservado para o álbum."""
-    rows = [row for row in _inventory(db, user).values() if row.quantity > 1 and row.sticker.active]
+def duplicates(db: Session, user: User, album: Album | None) -> list[dict]:
+    """Repetidas do álbum: tudo além do exemplar que fica reservado para o álbum."""
+    if album is None:
+        return []
+    rows = [row for row in _inventory(db, user, album.id).values() if row.quantity > 1 and row.sticker.active]
     rows.sort(key=lambda r: r.sticker.number)
     return [{**sticker_card(r.sticker), "available": r.quantity - 1, "pasted": r.pasted} for r in rows]

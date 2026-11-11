@@ -4,6 +4,7 @@ os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "postgresql+psycopg://album:album@localhost:5433/album_test"
 os.environ["SMTP_HOST"] = ""
 
+from datetime import timedelta  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
@@ -15,7 +16,8 @@ from sqlalchemy import text  # noqa: E402
 from app.api.auth import hasher  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Org, Rarity, Sticker, User, UserSticker  # noqa: E402
+from app.models import Album, AlbumChapter, Org, PackType, Rarity, Sticker, User, UserSticker  # noqa: E402
+from app.services import albums  # noqa: E402
 from app.services.core import now  # noqa: E402
 from app.services.mail import dev_outbox  # noqa: E402
 
@@ -35,11 +37,57 @@ def schema():
 
 @pytest.fixture(autouse=True)
 def clean():
-    # DELETE e não TRUNCATE ... CASCADE, que levaria junto pack_type e os dados da migration.
+    # DELETE e não TRUNCATE ... CASCADE, que levaria junto a universidade e os dados da migration.
+    # A ordem respeita as chaves RESTRICT: primeiro o que é de jogador, depois o conteúdo, por fim os álbuns.
     with engine.begin() as conn:
-        for table in ('sticker', 'trade', 'redeem_code', 'audit_log', 'rate_limit_event', '"user"', 'org'):
+        for table in (
+            'trade', 'pack_grant', 'redeem_code', 'audit_log', 'rate_limit_event', '"user"',
+            'sticker', 'album', 'org',
+        ):
             conn.execute(text(f"DELETE FROM {table}"))
+        conn.execute(text("DELETE FROM pack_type WHERE album_id IS NOT NULL"))
+        conn.execute(text("DELETE FROM university WHERE slug <> 'padrao'"))
     dev_outbox.clear()
+
+
+@pytest.fixture(autouse=True)
+def album(clean):
+    """Todo teste começa com um álbum em andamento na universidade padrão (começou ontem, dura 90 dias)."""
+    with SessionLocal() as session:
+        university = albums.default_university(session)
+        row = albums.create_album(
+            session, university.id, "Calourada", now() - timedelta(days=1), now() + timedelta(days=90), state="ready"
+        )
+        session.commit()
+        return row
+
+
+@pytest.fixture
+def make_album(db):
+    """Outro álbum da mesma universidade, em qualquer período (offsets em dias a partir de agora)."""
+
+    def factory(title: str, start: float, end: float, state: str = "ready") -> Album:
+        row = albums.create_album(
+            db, albums.default_university(db).id, title, now() + timedelta(days=start), now() + timedelta(days=end), state=state
+        )
+        db.commit()
+        return row
+
+    return factory
+
+
+def set_period(db, album: Album, start: float, end: float) -> None:
+    """Move o período do álbum (offsets em dias a partir de agora): -10, -1 já acabou; 1, 30 ainda não começou."""
+    row = db.get(Album, album.id)
+    row.starts_at, row.ends_at = now() + timedelta(days=start), now() + timedelta(days=end)
+    db.commit()
+    db.expire_all()
+
+
+def pack_of(db, album: Album, slug: str) -> PackType:
+    from sqlalchemy import select
+
+    return db.scalar(select(PackType).where(PackType.album_id == album.id, PackType.slug == slug))
 
 
 @pytest.fixture
@@ -57,6 +105,7 @@ def make_user(db):
             password_hash=PASSWORD_HASH,
             is_admin=admin,
             email_verified_at=now() if verified else None,
+            university_id=albums.default_university(db).id,
         )
         db.add(user)
         db.commit()
@@ -76,16 +125,17 @@ def login():
     return factory
 
 
-@pytest.fixture
-def content(db):
-    """Uma org com 10 comuns, 5 raras e 2 lendárias."""
-    org = Org(name="Org Teste", theme_color="#112233")
+def add_content(db, album: Album, org_name: str = "Org Teste") -> list[Sticker]:
+    """Uma org com 10 comuns, 5 raras e 2 lendárias, com capítulo no álbum dado."""
+    org = Org(name=org_name, theme_color="#112233", university_id=album.university_id)
     db.add(org)
     db.flush()
+    db.add(AlbumChapter(album_id=album.id, org_id=org.id))
     rarities = {r.name: r for r in db.query(Rarity)}
     stickers = []
     for number, name in enumerate(["comum"] * 10 + ["rara"] * 5 + ["lendária"] * 2, start=1):
         sticker = Sticker(
+            album_id=album.id,
             org_id=org.id,
             number=number,
             name=f"Figurinha {number}",
@@ -99,6 +149,11 @@ def content(db):
         stickers.append(sticker)
     db.commit()
     return stickers
+
+
+@pytest.fixture
+def content(db, album):
+    return add_content(db, album)
 
 
 @pytest.fixture

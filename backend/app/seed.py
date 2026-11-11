@@ -1,17 +1,18 @@
-"""Conteúdo fictício para desenvolvimento: 5 orgs, 125 figurinhas com imagens geradas."""
+"""Conteúdo fictício para desenvolvimento: o álbum "Calourada", com 5 orgs e 125 figurinhas de imagens geradas."""
 import random
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
 
 from app.api.auth import hasher
 from app.db import SessionLocal
-from app.models import Org, Rarity, RedeemCode, Sticker, PackType, User
-from app.services import content
+from app.models import AlbumChapter, Org, Rarity, RedeemCode, Sticker, User
+from app.services import albums, content
 from app.services.codes import generate_code
 from app.services.images import save_webp
+from app.services.packs import album_pack_type
 from app.settings import settings
 
 ORGS = [
@@ -95,17 +96,30 @@ def seed_demo() -> None:
             print("Já há conteúdo no banco; nada a fazer.")
             return
         rarities = {r.name: r for r in db.scalars(select(Rarity))}
+        university = albums.default_university(db)
+        # O álbum de exemplo já nasce em andamento: começou ontem e dura 90 dias.
+        today = datetime.now(UTC)
+        album = albums.create_album(
+            db, university.id, "Calourada", today - timedelta(days=1), today + timedelta(days=90), state="ready"
+        )
         number = 1
         for order, (name, color, description) in enumerate(ORGS):
             org = Org(
+                university_id=university.id,
                 name=name,
                 description=description,
                 theme_color=color,
-                sort_order=order,
                 logo_url=save_webp(_logo(name, color), f"orgs/{name}/logo", 240),
-                mosaic_image_url=save_webp(_poster(name, color, rng), f"orgs/{name}/mosaico", 1200),
             )
             db.add(org)
+            db.flush()
+            chapter = AlbumChapter(
+                album_id=album.id,
+                org_id=org.id,
+                sort_order=order,
+                mosaic_image_url=save_webp(_poster(name, color, rng), f"orgs/{name}/mosaico", 1200),
+            )
+            db.add(chapter)
             db.flush()
             for page_no, template in enumerate(PAGE_TEMPLATES, start=1):
                 for size, x, y, w, h in template:
@@ -114,6 +128,7 @@ def seed_demo() -> None:
                     rarity = "lendária" if size == "G" and page_no == 1 else "rara" if size == "G" or rng.random() < 0.2 else "comum"
                     db.add(
                         Sticker(
+                            album_id=album.id,
                             org_id=org.id,
                             number=number,
                             name=person,
@@ -130,7 +145,7 @@ def seed_demo() -> None:
                     )
                     number += 1
             db.flush()
-            pieces = content.generate_mosaic(db, org, 2, 3, rarities["comum"].id)
+            pieces = content.generate_mosaic(db, chapter, 2, 3, rarities["comum"].id)
             number += len(pieces)
 
         # A senha de dev está no README; online ela seria pública, e o admin é criado à parte.
@@ -141,11 +156,16 @@ def seed_demo() -> None:
         password = hasher.hash(plain)
         verified = datetime.now(UTC)
         for email, nickname, is_admin in accounts:
-            db.add(User(email=email, nickname=nickname, password_hash=password, is_admin=is_admin, email_verified_at=verified))
+            db.add(
+                User(
+                    email=email, nickname=nickname, password_hash=password, is_admin=is_admin,
+                    email_verified_at=verified, university_id=university.id,
+                )
+            )
 
-        premium = db.scalar(select(PackType).where(PackType.slug == "premium"))
+        premium = album_pack_type(db, album.id, "premium")
         codes = [generate_code() for _ in range(3)]
-        db.add_all(RedeemCode(code=code, pack_type_id=premium.id, label="biblioteca") for code in codes)
+        db.add_all(RedeemCode(code=code, album_id=album.id, pack_type_id=premium.id, label="biblioteca") for code in codes)
         db.commit()
     print(f"Conteúdo de teste criado. Contas (senha {plain}):", ", ".join(email for email, *_ in accounts))
     print("Códigos:", ", ".join(codes))

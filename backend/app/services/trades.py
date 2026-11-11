@@ -5,8 +5,9 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Trade, TradeOffer, User, UserSticker
+from app.models import Album, Sticker, Trade, TradeOffer, User, UserSticker
 from app.services.album import sticker_card
+from app.services.albums import ENDED, album_status, current_album, require_live
 from app.services.core import audit, cfg, lock_user, now
 from app.services.packs import add_to_inventory
 
@@ -32,9 +33,16 @@ def expire_if_due(db: Session, trade: Trade) -> bool:
 
 
 def current_trade(db: Session, user: User) -> Trade | None:
+    moment = now()
     trades = db.scalars(
         select(Trade)
-        .where(Trade.state.in_(LIVE), or_(Trade.creator_id == user.id, Trade.partner_id == user.id))
+        .join(Album, Album.id == Trade.album_id)
+        .where(
+            Trade.state.in_(LIVE),
+            or_(Trade.creator_id == user.id, Trade.partner_id == user.id),
+            # Troca de álbum que acabou não conta mais como "em andamento".
+            Album.state == "ready", Album.starts_at <= moment, Album.ends_at > moment,
+        )
         .order_by(Trade.created_at.desc())
     ).all()
     current = None
@@ -44,26 +52,42 @@ def current_trade(db: Session, user: User) -> Trade | None:
     return current
 
 
+def _end_with_album(db: Session, trade: Trade) -> bool:
+    """Troca de álbum que já acabou expira no primeiro acesso, como as vencidas pelo relógio."""
+    album = db.get(Album, trade.album_id)
+    if trade.state in LIVE and album_status(album) != "active":
+        trade.state = "expired"
+        trade.finished_at = now()
+        audit(db, None, "trade.expired", trade_id=trade.id, reason="album_ended")
+        db.commit()
+        return True
+    return False
+
+
 def create_trade(db: Session, user: User) -> Trade:
+    album = require_live(db, user)
     lock_user(db, user.id)
     if current_trade(db, user) is not None:
         raise HTTPException(409, "Você já está em uma troca.")
     trade = Trade(
         token=secrets.token_urlsafe(24),
+        album_id=album.id,
         creator_id=user.id,
-        expires_at=now() + timedelta(seconds=cfg(db, "trade.link_ttl_seconds")),
+        expires_at=now() + timedelta(seconds=cfg(db, "trade.link_ttl_seconds", album.id)),
     )
     db.add(trade)
     db.flush()
-    audit(db, user.id, "trade.create", trade_id=trade.id)
+    audit(db, user.id, "trade.create", trade_id=trade.id, album_id=album.id)
     return trade
 
 
 def join_trade(db: Session, user: User, token: str) -> Trade:
     # Ordem de travas: usuário e depois troca, para "uma troca ativa por vez" valer sob concorrência.
+    album = require_live(db, user)
     lock_user(db, user.id)
     trade = _lock_trade(db, token)
-    if trade is None or trade.state != "open" or expire_if_due(db, trade):
+    # Link de outro álbum (ou de álbum encerrado) é só um link inválido: não revela nada.
+    if trade is None or trade.state != "open" or trade.album_id != album.id or expire_if_due(db, trade):
         raise HTTPException(410, INVALID_LINK)
     if trade.creator_id == user.id:
         raise HTTPException(409, "Envie este link para a outra pessoa.")
@@ -72,7 +96,7 @@ def join_trade(db: Session, user: User, token: str) -> Trade:
     trade.partner_id = user.id
     trade.state = "active"
     trade.joined_at = now()
-    trade.expires_at = now() + timedelta(seconds=cfg(db, "trade.session_ttl_seconds"))
+    trade.expires_at = now() + timedelta(seconds=cfg(db, "trade.session_ttl_seconds", album.id))
     audit(db, user.id, "trade.join", trade_id=trade.id)
     return trade
 
@@ -84,6 +108,8 @@ def _require_participant(trade: Trade | None, user: User) -> Trade:
 
 
 def _require_active(db: Session, trade: Trade) -> None:
+    if _end_with_album(db, trade):
+        raise HTTPException(409, ENDED)
     if expire_if_due(db, trade):
         raise HTTPException(410, "O tempo desta troca acabou.")
     if trade.state != "active":
@@ -95,9 +121,12 @@ def _offers(db: Session, trade: Trade, user_id: int) -> list[TradeOffer]:
     return sorted(rows, key=lambda o: o.sticker.number)
 
 
-def _available(db: Session, user_id: int, sticker_ids: list[int]) -> dict[int, int]:
+def _available(db: Session, album_id: int, user_id: int, sticker_ids: list[int]) -> dict[int, int]:
+    """Repetidas disponíveis, só entre figurinhas do álbum da troca."""
     rows = db.scalars(
-        select(UserSticker).where(UserSticker.user_id == user_id, UserSticker.sticker_id.in_(sticker_ids))
+        select(UserSticker)
+        .join(Sticker, Sticker.id == UserSticker.sticker_id)
+        .where(UserSticker.user_id == user_id, UserSticker.sticker_id.in_(sticker_ids), Sticker.album_id == album_id)
     )
     return {row.sticker_id: row.quantity - 1 for row in rows}
 
@@ -105,7 +134,7 @@ def _available(db: Session, user_id: int, sticker_ids: list[int]) -> dict[int, i
 def set_offer(db: Session, user: User, token: str, items: dict[int, int]) -> Trade:
     trade = _require_participant(_lock_trade(db, token), user)
     _require_active(db, trade)
-    available = _available(db, user.id, list(items))
+    available = _available(db, trade.album_id, user.id, list(items))
     for sticker_id, quantity in items.items():
         if quantity < 1 or quantity > available.get(sticker_id, 0):
             raise HTTPException(409, "Você só pode oferecer figurinhas repetidas.")
@@ -150,7 +179,7 @@ def _settle(db: Session, trade: Trade, creator_offers: list[TradeOffer], partner
 
     moves = ((trade.creator_id, trade.partner_id, creator_offers), (trade.partner_id, trade.creator_id, partner_offers))
     for giver, _, offers in moves:
-        available = _available(db, giver, [o.sticker_id for o in offers])
+        available = _available(db, trade.album_id, giver, [o.sticker_id for o in offers])
         if any(o.quantity > available.get(o.sticker_id, 0) for o in offers):
             raise HTTPException(409, "Uma das figurinhas oferecidas não está mais disponível.")
 
@@ -232,9 +261,9 @@ def visible_trade(db: Session, user: User, token: str) -> dict:
     trade = _lock_trade(db, token)
     if trade is None:
         raise HTTPException(404, INVALID_LINK)
-    expire_if_due(db, trade)
+    _end_with_album(db, trade) or expire_if_due(db, trade)
     if user.id in (trade.creator_id, trade.partner_id):
         return trade_view(db, trade, user)
-    if trade.state != "open":
+    if trade.state != "open" or trade.album_id != getattr(current_album(db, user), "id", None):
         raise HTTPException(410, INVALID_LINK)
     return {"token": token, "state": "invite", "other_nickname": trade.creator.nickname}

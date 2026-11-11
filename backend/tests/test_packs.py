@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 
-from app.models import Config, PackGrant, PackOpeningItem, PackType, Rarity, Sticker, UserSticker
+from app.models import Album, AlbumParticipation, Config, PackGrant, PackOpeningItem, PackType, Rarity, Sticker, UserSticker
 from app.services import packs
 from app.services.packs import daily_kind, draw_stickers, next_pack_kind, refill_drawer
 
@@ -16,7 +16,14 @@ REFILL = timedelta(hours=12)
 
 
 def _pack(db, slug):
-    return db.scalar(select(PackType).where(PackType.slug == slug))
+    """O tipo de pacote do álbum do teste (o modelo global tem o mesmo slug)."""
+    return db.scalar(select(PackType).where(PackType.album_id.is_not(None), PackType.slug == slug))
+
+
+def _part(db, user):
+    """A participação do usuário no álbum do teste: é nela que mora o timer da gaveta."""
+    db.expire_all()
+    return db.scalar(select(AlbumParticipation).where(AlbumParticipation.user_id == user.id))
 
 
 def _at(year, month, day, hour=12):
@@ -55,10 +62,10 @@ def test_premium_garante_ao_menos_uma_rara(db, content):
 def test_filtro_por_org(db, content):
     from app.models import Org
 
-    other = Org(name="Outra")
+    other = Org(name="Outra", university_id=content[0].org.university_id)
     db.add(other)
     db.flush()
-    db.add(Sticker(org_id=other.id, number=999, name="X", rarity_id=1, back_links=[], slot_layout={}))
+    db.add(Sticker(album_id=content[0].album_id, org_id=other.id, number=999, name="X", rarity_id=1, back_links=[], slot_layout={}))
     db.flush()
     pack = _pack(db, "comum")
     pack.org_filter = other.id
@@ -85,13 +92,13 @@ def test_conta_nova_recebe_boas_vindas_e_o_timer_comeca(db, make_user):
     with _clock(start):
         assert refill_drawer(db, user) == 2
         assert refill_drawer(db, user) == 0
-    assert user.next_pack_at == start + REFILL
+    assert _part(db, user).next_pack_at == start + REFILL
 
 
 def test_conta_nao_confirmada_nao_recebe(db, make_user):
     user = make_user("Sem", verified=False)
     assert refill_drawer(db, user) == 0
-    assert user.next_pack_at is None
+    assert _part(db, user) is None
 
 
 def test_entrega_quando_o_timer_acaba_e_o_ciclo_segue_com_a_gaveta_cheia(db, make_user):
@@ -104,7 +111,7 @@ def test_entrega_quando_o_timer_acaba_e_o_ciclo_segue_com_a_gaveta_cheia(db, mak
     with _clock(start + REFILL):
         assert refill_drawer(db, user) == 1
     assert _daily_stock(db, user) == 3
-    assert user.next_pack_at == start + 2 * REFILL
+    assert _part(db, user).next_pack_at == start + 2 * REFILL
 
 
 def _open_daily(db, user):
@@ -125,7 +132,7 @@ def test_abrir_pacote_nao_mexe_no_timer(db, content, make_user):
     # Gaveta cheia: o ciclo continua, então abrir no meio dele aproveita o tempo já corrido.
     with _clock(start + REFILL + timedelta(hours=11)):
         _open_daily(db, user)
-    assert user.next_pack_at == start + 2 * REFILL
+    assert _part(db, user).next_pack_at == start + 2 * REFILL
     with _clock(start + 2 * REFILL):
         assert refill_drawer(db, user) == 1
 
@@ -138,7 +145,7 @@ def test_ciclo_com_a_gaveta_cheia_nao_entrega_e_mantem_o_ritmo(db, make_user):
     with _clock(start + 5 * REFILL + timedelta(hours=1)):
         assert refill_drawer(db, user) == 1
     assert _daily_stock(db, user) == 3
-    assert user.next_pack_at == start + 6 * REFILL
+    assert _part(db, user).next_pack_at == start + 6 * REFILL
 
 
 def test_com_mais_de_um_espaco_o_timer_emenda(db, content, make_user):
@@ -151,7 +158,7 @@ def test_com_mais_de_um_espaco_o_timer_emenda(db, content, make_user):
     assert _daily_stock(db, user) == 0
     with _clock(start + REFILL):
         assert refill_drawer(db, user) == 1
-    assert user.next_pack_at == start + 2 * REFILL
+    assert _part(db, user).next_pack_at == start + 2 * REFILL
 
 
 def test_tempo_fora_do_app_conta_ate_encher(db, content, make_user):
@@ -164,14 +171,14 @@ def test_tempo_fora_do_app_conta_ate_encher(db, content, make_user):
     with _clock(start + timedelta(days=30)):
         assert refill_drawer(db, user) == 3
     assert _daily_stock(db, user) == 3
-    assert user.next_pack_at > start + timedelta(days=30)
+    assert _part(db, user).next_pack_at > start + timedelta(days=30)
 
 
 def test_gaveta_nao_conta_pacotes_de_codigo(db, make_user):
     user = make_user("Cod")
     premium = _pack(db, "premium")
     for _ in range(5):
-        packs.grant_pack(db, user.id, premium.id, "code", "x")
+        packs.grant_pack(db, user.id, premium, "code", "x")
     db.commit()
     with _clock(_at(2026, 3, 1)):
         assert refill_drawer(db, user) == 2
@@ -304,8 +311,9 @@ def test_regra_de_escolha_do_pacote():
 
 
 def _prediction(db, user, next_at, last_on):
-    user.next_pack_at, user.last_daily_grant_on = next_at, last_on
-    return next_pack_kind(db, user)
+    album = db.scalar(select(Album))
+    part = AlbumParticipation(user_id=user.id, album_id=album.id, next_pack_at=next_at, last_daily_grant_on=last_on)
+    return next_pack_kind(db, part)
 
 
 def test_previsao_na_virada_da_meia_noite(db, make_user):
@@ -329,7 +337,8 @@ def test_previsao_quando_ja_recebeu_hoje(db, make_user):
 
 def test_previsao_sem_timer_e_com_premium_desligado_ou_inexistente(db, make_user):
     user = make_user("Sem2")
-    assert next_pack_kind(db, user) is None
+    assert next_pack_kind(db, None) is None
+    assert _prediction(db, user, None, None) is None
     at = datetime(2026, 3, 3, 12, tzinfo=SP)
     every = db.get(Config, "daily.premium_every_n_days")
     slug = db.get(Config, "daily.premium_pack_slug")
@@ -358,9 +367,10 @@ def test_previsao_bate_com_a_entrega_real(db, content, make_user):
             refill_drawer(db, user)
             _open_daily(db, user)
         for _ in range(4):
-            predicted = next_pack_kind(db, user)
+            part = _part(db, user)
+            predicted = next_pack_kind(db, part)
             before = set(db.scalars(select(PackGrant.id).where(PackGrant.user_id == user.id)))
-            with _clock(user.next_pack_at):
+            with _clock(part.next_pack_at):
                 assert refill_drawer(db, user) == 1
                 new = db.scalars(select(PackGrant).where(PackGrant.user_id == user.id, PackGrant.id.not_in(before))).one()
                 assert new.pack_type.slug == predicted["slug"]

@@ -6,14 +6,35 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, Config, RateLimitEvent, User
+from app.models import AlbumConfig, AuditLog, Config, RateLimitEvent, User
 
 
 def now() -> datetime:
     return datetime.now(UTC)
 
 
-def cfg(db: Session, key: str) -> Any:
+# Parâmetros que um álbum pode sobrescrever (tabela album_config). O resto é sempre global.
+ALBUM_KEYS = frozenset(
+    {
+        "daily.timezone",
+        "daily.refill_minutes",
+        "daily.stock_cap",
+        "daily.welcome_packs",
+        "daily.premium_every_n_days",
+        "daily.common_pack_slug",
+        "daily.premium_pack_slug",
+        "trade.link_ttl_seconds",
+        "trade.session_ttl_seconds",
+    }
+)
+
+
+def cfg(db: Session, key: str, album_id: int | None = None) -> Any:
+    """Parâmetro do jogo: a sobrescrita do álbum, se houver, senão o padrão global."""
+    if album_id is not None and key in ALBUM_KEYS:
+        override = db.get(AlbumConfig, (album_id, key))
+        if override is not None:
+            return override.value
     row = db.get(Config, key)
     if row is None:
         raise RuntimeError(f"Parâmetro de configuração ausente: {key}")

@@ -3,15 +3,21 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from app.models import PackGrant, PackType, RedeemCode, Sticker, UserSticker
+from app.models import Album, PackGrant, RedeemCode, Sticker, UserSticker
 from app.services.codes import generate_code, normalize_code
 from app.services.core import now
+from tests.conftest import pack_of, set_period
 
 
-def _code(db, **kwargs) -> str:
-    pack = db.scalar(select(PackType).where(PackType.slug == "premium"))
+def _album(db) -> Album:
+    return db.scalar(select(Album).where(Album.title == "Calourada"))
+
+
+def _code(db, album=None, **kwargs) -> str:
+    album = album or _album(db)
+    pack = pack_of(db, album, "premium")
     value = generate_code()
-    db.add(RedeemCode(code=value, pack_type_id=pack.id, label="teste", **kwargs))
+    db.add(RedeemCode(code=value, album_id=album.id, pack_type_id=pack.id, label="teste", **kwargs))
     db.commit()
     return value
 
@@ -65,7 +71,7 @@ def test_normalizacao():
 
 def test_admin_gera_lote_e_ve_resgates(db, make_user, login):
     admin = login(make_user("Adm", admin=True))
-    pack = db.scalar(select(PackType).where(PackType.slug == "comum"))
+    pack = pack_of(db, _album(db), "comum")
     created = admin.post("/api/admin/codes", json={"pack_type_id": pack.id, "label": "biblioteca", "count": 5}).json()
     assert len(set(created["codes"])) == 5
     player = make_user("Joga")
@@ -74,15 +80,30 @@ def test_admin_gera_lote_e_ve_resgates(db, make_user, login):
     assert [c["redeemed_by"] for c in listed if c["code"] == created["codes"][0]] == ["Joga"]
 
 
-def test_admin_remove_figurinha_de_todo_mundo(db, content, make_user, give, login):
+def test_admin_nao_apaga_figurinha_que_alguem_tem(db, content, album, make_user, give, login):
+    """Antes a remoção levava o inventário de todo mundo junto. Com álbuns imutáveis, figurinha
+    com inventário não sai: a API recusa e o banco também (ON DELETE RESTRICT)."""
+    from sqlalchemy.exc import IntegrityError
+
+    from tests.conftest import set_period
+
     admin = login(make_user("Adm2", admin=True))
     player = make_user("Tem")
-    sticker_id, player_id = content[0].id, player.id
+    sticker_id, free_id, player_id = content[0].id, content[1].id, player.id
     give(player, content[0], 2)
-    assert admin.delete(f"/api/admin/stickers/{sticker_id}").status_code == 204
+    # Álbum em andamento: estrutura congelada, nem a figurinha livre sai.
+    assert admin.delete(f"/api/admin/stickers/{free_id}").status_code == 409
+    set_period(db, album, 5, 60)  # agendado: ainda dá para mexer na estrutura
+    assert admin.delete(f"/api/admin/stickers/{sticker_id}").status_code == 409
+    assert admin.delete(f"/api/admin/stickers/{free_id}").status_code == 204
     db.expire_all()
-    assert db.get(Sticker, sticker_id) is None
-    assert db.get(UserSticker, (player_id, sticker_id)) is None
+    assert db.get(Sticker, sticker_id) is not None and db.get(Sticker, free_id) is None
+    assert db.get(UserSticker, (player_id, sticker_id)).quantity == 2
+    try:
+        db.execute(Sticker.__table__.delete().where(Sticker.id == sticker_id))
+        raise AssertionError("o banco deveria recusar")
+    except IntegrityError:
+        db.rollback()
 
 
 def test_fim_da_campanha_apaga_jogadores_e_nao_libera_codigos(db, content, make_user, give, login):
@@ -97,7 +118,7 @@ def test_fim_da_campanha_apaga_jogadores_e_nao_libera_codigos(db, content, make_
     keeper_id = keeper.id
     db.commit()
 
-    purge_campaign()
+    purge_campaign()  # sem álbum: apaga todas as contas de jogadores
 
     db.expire_all()
     assert [u.id for u in db.scalars(select(User))] == [keeper_id]
@@ -114,6 +135,9 @@ def test_admin_edita_peca_de_mosaico(db, content, make_user, login):
     db.commit()
     body = {"org_id": piece.org_id, "name": "Peça nova", "rarity_id": piece.rarity_id, "page_no": 0, "number": piece.number}
     assert admin.put(f"/api/admin/stickers/{piece.id}", json=body).status_code == 200
+    # Com o álbum em andamento não se cria figurinha; agendado, a validação de espaço volta a valer.
+    assert admin.post("/api/admin/stickers", json={**body, "number": 500}).status_code == 409
+    set_period(db, db.get(Album, piece.album_id), 5, 60)
     assert admin.post("/api/admin/stickers", json={**body, "number": 500}).status_code == 400
 
 

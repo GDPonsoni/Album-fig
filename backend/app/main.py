@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api import admin, auth, dev, game, trades
 from app.api.deps import current_user
 from app.db import SessionLocal
+from app.services.albums import close_due_albums
 from app.services.core import purge_rate_events
 from app.services.images import read_media
 from app.services.mail import dev_outbox
@@ -27,7 +28,11 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 def _sweep() -> list[int]:
     with SessionLocal() as db:
         purge_rate_events(db)
-        return expire_due_trades(db)
+        expired = expire_due_trades(db)
+        # Álbum que passou do fim: trocas abertas expiram e o resumo final é gravado.
+        expired += close_due_albums(db)
+        db.commit()
+        return expired
 
 
 async def _sweeper() -> None:
@@ -47,7 +52,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Álbum da Calourada", lifespan=lifespan, docs_url=None if settings.is_prod else "/api/docs",
+app = FastAPI(title="UniAlbum", lifespan=lifespan, docs_url=None if settings.is_prod else "/api/docs",
               openapi_url=None if settings.is_prod else "/api/openapi.json", redoc_url=None)
 
 

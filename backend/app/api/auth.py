@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import SESSION_COOKIE, current_user, hash_token, start_session
 from app.db import get_db
 from app.models import EmailToken, User, UserSession
+from app.services.albums import default_university
 from app.services.core import audit, enforce_rate, now
 from app.services.mail import send_mail
 from app.services.packs import refill_drawer
@@ -122,7 +123,12 @@ def register(body: RegisterIn, request: Request, tasks: BackgroundTasks, db: Ses
     if db.scalar(select(User.id).where(func.lower(User.nickname) == body.nickname.lower())) is not None:
         raise HTTPException(409, "Este apelido já está em uso.")
 
-    user = User(email=body.email, password_hash=hasher.hash(body.password), nickname=body.nickname)
+    user = User(
+        email=body.email,
+        password_hash=hasher.hash(body.password),
+        nickname=body.nickname,
+        university_id=default_university(db).id,  # uma universidade por enquanto; sem escolha na tela
+    )
     db.add(user)
     db.flush()
     audit(db, user.id, "user.register")
