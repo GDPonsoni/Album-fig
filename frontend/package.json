@@ -5,11 +5,13 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vite build --ssr tests/qr.test.ts --outDir node_modules/.tests --emptyOutDir --logLevel warn && node node_modules/.tests/qr.test.js"
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.3.0",
     "@fontsource/bowlby-one": "^5.3.0",
+    "jsqr": "^1.4.0",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

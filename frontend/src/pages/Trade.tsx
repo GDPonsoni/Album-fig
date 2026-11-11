@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api, post, type Card, type TradeView } from '../api';
 import { useAuth } from '../auth';
+import { QrScanner } from '../components/QrScanner';
 import { StickerSheet } from '../components/StickerSheet';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { buzz } from '../fx';
@@ -43,6 +44,7 @@ export function TradeHome() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [dupes, setDupes] = useState<Duplicate[] | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     api<{ token: string | null }>('/trades/current')
@@ -73,12 +75,14 @@ export function TradeHome() {
         <h2>Encontre alguém e troque ao vivo</h2>
         <ol>
           <li>Toque em <b>Trocar</b> para gerar um QR.</li>
-          <li>A outra pessoa aponta a câmera do celular para ele.</li>
+          <li>A outra pessoa toca em <b>Ler QR</b> e aponta a câmera para ele.</li>
           <li>Cada um escolhe as repetidas e os dois aceitam.</li>
         </ol>
         <Message>{error}</Message>
         <button className="btn btn-primary btn-big" disabled={busy || !user?.verified} onClick={start}>Trocar</button>
+        <button className="btn btn-big" disabled={!user?.verified} onClick={() => setScanning(true)}>Ler QR</button>
       </section>
+      {scanning ? <QrScanner onRead={(path) => navigate(path)} onClose={() => setScanning(false)} /> : null}
       {dupes ? <DuplicatesPanel dupes={dupes} /> : null}
     </div>
   );
