@@ -218,7 +218,7 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
             <li key={`empty-${i}`} className={`drawer-empty${i === 0 && left !== null ? ' drawer-next' : ''}`}>
               {i === 0 && left !== null ? (
                 <>
-                  <small>{data.next_pack_kind?.is_premium ? 'Premium chega em' : 'Chega em'}</small>
+                  <small>Chega em</small>
                   {data.next_pack_kind?.is_premium ? <em className="drawer-premium">Premium</em> : null}
                   <strong className="drawer-time" role="timer">{formatCountdown(left)}</strong>
                   <span className="drawer-bar"><span style={{ width: `${progress}%` }} /></span>

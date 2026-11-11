@@ -81,7 +81,7 @@ await shot(ana, '02b-pacotes');
 await openPack(ana);
 step('pacote recebido e aberto');
 await ana.getByRole('link', { name: 'Colar no álbum' }).click();
-const tile = ana.getByRole('button', { name: /^Colar / }).first();
+const tile = ana.locator('.tray-tile').first();
 await tile.waitFor();
 await shot(ana, '06-bandeja');
 await tile.click();
@@ -109,13 +109,41 @@ if (await filled.count()) {
   step('verso visível depois de colar');
 }
 
-// Colar o resto, inclusive peça de mosaico se houver
-for (let i = 0; i < 12; i += 1) {
-  const next = ana.getByRole('button', { name: /^Colar / }).first();
+// Colar em sequência rápida: a animação não espera a rede e não cola em dobro
+for (let i = 0; i < 2; i += 1) {
+  const next = ana.locator('.tray-tile').first();
   if (!(await next.count())) break;
-  await next.click();
+  await next.dblclick();
   await ana.waitForTimeout(900);
 }
+const coladas = async (page) => parseInt((await (await page.request.get(`${BASE}/api/album`)).json()).filled, 10);
+if ((await coladas(ana)) !== 3) problems.push(`toque duplo colou errado: ${await coladas(ana)} coladas, esperado 3`);
+step('colar em sequência, sem colagem em dobro');
+
+// Colar tudo: o resto da bandeja de uma vez
+const faltam = (await (await ana.request.get(`${BASE}/api/album`)).json()).tray.length;
+await ana.getByRole('button', { name: 'Colar tudo' }).click();
+await ana.waitForTimeout(200);
+await shot(ana, '09b-colar-tudo');
+await ana.getByText('Bandeja vazia').waitFor({ timeout: 8000 });
+if ((await coladas(ana)) !== 3 + faltam) problems.push('colar tudo não colou a bandeja inteira');
+await shot(ana, '09c-tudo-colado');
+step('colar tudo esvazia a bandeja');
+
+// O pacote aberto continua visível na tela de pacotes, com os selos
+await ana.getByRole('link', { name: /Pacotes/ }).click();
+const historico = ana.getByRole('region', { name: 'Últimos pacotes abertos' });
+await historico.waitFor();
+if ((await historico.locator('.history-pack').count()) !== 1) problems.push('histórico deveria ter 1 pacote');
+if (!(await historico.locator('.seal-new, .seal-dup').count())) problems.push('histórico sem selos Nova/Repetida');
+await openPack(ana);
+await ana.getByRole('button', { name: 'Fechar' }).click();
+await historico.locator('.history-pack').nth(1).waitFor();
+await shot(ana, '09d-historico');
+step('pacotes abertos ficam no histórico, sem recarregar');
+await ana.getByRole('link', { name: 'Álbum' }).click();
+await ana.getByRole('button', { name: 'Colar tudo' }).click();
+await ana.getByText('Bandeja vazia').waitFor({ timeout: 8000 });
 
 // Swipe entre páginas, nos dois sentidos, a partir de uma página conhecida
 async function swipe(page, fromRight) {
@@ -257,6 +285,39 @@ await eve.getByText('Código inválido').waitFor();
 await shot(eve, '15-codigo');
 step('código inválido recebe erro genérico');
 
+// ---- Link de QR de código: abrir não consome, o botão resgata
+const { code: qrCode } = await (await eve.request.post(`${BASE}/api/dev/codes`, { data: { slug: 'comum' }, headers: { 'X-Requested-With': 'album' } })).json();
+await eve.goto(`${BASE}/r/${qrCode}`);
+await eve.getByRole('heading', { name: 'Resgatar este código?' }).waitFor();
+await eve.reload();
+await eve.getByRole('heading', { name: 'Resgatar este código?' }).waitFor();
+await shot(eve, '15c-link-do-codigo');
+await eve.getByRole('button', { name: 'Resgatar' }).click();
+await eve.getByRole('heading', { name: 'Código resgatado!' }).waitFor();
+await eve.goto(`${BASE}/r/${qrCode}`);
+await eve.getByText('Código inválido').waitFor();
+step('link do QR mostra a confirmação e só o botão resgata');
+
+// Deslogado, o link do código sobrevive ao login
+const { code: qrCode2 } = await (await eve.request.post(`${BASE}/api/dev/codes`, { data: { slug: 'comum' }, headers: { 'X-Requested-With': 'album' } })).json();
+const visitante = await phone();
+await visitante.goto(`${BASE}/r/${qrCode2}`);
+await visitante.getByLabel('E-mail').fill('ana@example.com');
+await visitante.getByLabel('Senha').fill('album12345');
+await visitante.getByRole('button', { name: 'Entrar' }).click();
+await visitante.getByRole('heading', { name: 'Resgatar este código?' }).waitFor();
+step('destino do QR preservado no login');
+
+// Ler QR sem câmera: mensagem clara, sem travar
+await visitante.goto(`${BASE}/trocar`);
+await visitante.getByRole('button', { name: 'Ler QR' }).click();
+await visitante.getByRole('dialog', { name: 'Ler QR de troca' }).getByRole('alert').waitFor();
+await shot(visitante, '15d-sem-camera');
+await visitante.getByRole('button', { name: 'Fechar' }).click();
+step('ler QR sem câmera mostra aviso');
+
+await eve.goto(`${BASE}/pacotes`);
+
 // ---- Gaveta e atalhos de teste
 const prontos = () => eve.locator('.ready-head h2').innerText();
 const antes = parseInt(await prontos(), 10) || 0;
@@ -291,6 +352,11 @@ await admin.getByRole('button', { name: 'Editar' }).first().click();
 await admin.waitForTimeout(100);
 await shot(admin, '17-admin-figurinha');
 step('painel admin navega');
+await admin.getByRole('button', { name: 'Códigos' }).click();
+await admin.getByRole('button', { name: /Imprimir disponíveis com QR/ }).click();
+await admin.locator('.code-cards img').first().waitFor();
+await shot(admin, '18-admin-codigos-qr');
+step('folha de códigos com QR');
 
 await browser.close();
 if (problems.length) {
