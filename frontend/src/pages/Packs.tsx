@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
-import { api, post, type Card, type GrantView } from '../api';
+import { api, post, type AlbumInfo, type Card, type GrantView } from '../api';
 import { useAuth } from '../auth';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { buzz, lowFx } from '../fx';
@@ -12,6 +12,7 @@ interface Opening {
   items: Drawn[];
 }
 interface Stock {
+  album: AlbumInfo | null; // null = nenhum álbum em andamento
   stock: GrantView[];
   daily_cap: number;
   daily_in_stock: number;
@@ -60,7 +61,7 @@ function useCountdown(data: Stock | null, onDone: () => void) {
 function Wrapper({ grant }: { grant: GrantView }) {
   return (
     <div className={`foil foil-${grant.slug === 'premium' ? 'gold' : 'blue'}`}>
-      <span className="foil-brand">Álbum da Calourada</span>
+      <span className="foil-brand">Álbum de figurinhas</span>
       <strong>{grant.name.replace('Pacote ', '')}</strong>
       <small>{grant.stickers_per_pack} figurinhas</small>
     </div>
@@ -418,13 +419,20 @@ export function PacksPage() {
       <h1 className="screen-title">Pacotes</h1>
       {!user?.verified ? <VerifyBanner /> : null}
       <Message>{error}</Message>
-      {data ? (
+      {data && !data.album ? (
+        <section className="panel paper empty-album">
+          <h2>Nenhum álbum em andamento</h2>
+          <p className="muted">Os pacotes voltam quando o próximo álbum começar.</p>
+          <Link className="btn" to="/albuns">Meus álbuns</Link>
+        </section>
+      ) : null}
+      {data?.album ? (
         <>
           <Drawer data={data} left={left} disabled={!user?.verified} onOpen={setOpening} />
           {data.dev_tools && user?.verified ? <DevTools onChanged={reload} onCode={setCode} /> : null}
+          <RedeemForm onRedeemed={(grant) => { setReward(grant); reload(); }} disabled={!user?.verified} code={code} setCode={setCode} />
         </>
       ) : null}
-      <RedeemForm onRedeemed={(grant) => { setReward(grant); reload(); }} disabled={!user?.verified} code={code} setCode={setCode} />
       <History openings={history} />
       {reward ? (
         <CodeReward

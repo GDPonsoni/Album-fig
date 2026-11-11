@@ -358,6 +358,85 @@ await admin.locator('.code-cards img').first().waitFor();
 await shot(admin, '18-admin-codigos-qr');
 step('folha de códigos com QR');
 
+// ---- Admin de álbuns: lista, estimador ao vivo e sobreposição recusada com mensagem clara
+await admin.goto(`${BASE}/admin/albums`);
+await admin.getByText('Em andamento').first().waitFor();
+await admin.getByRole('button', { name: 'Abrir' }).first().click();
+await admin.getByRole('heading', { name: /Capítulos \(5\)/ }).waitFor();
+await admin.locator('.estimate-table').waitFor();
+const antesPct = await admin.locator('.estimate-table tbody tr').first().locator('td').last().innerText();
+await admin.getByLabel('Minutos entre pacotes da gaveta').fill('20000');
+await admin.waitForFunction((old) => document.querySelector('.estimate-table tbody tr td:last-child')?.textContent !== old, antesPct);
+const depoisPct = await admin.locator('.estimate-table tbody tr').first().locator('td').last().innerText();
+if (parseFloat(depoisPct) >= parseFloat(antesPct)) problems.push(`estimador não reagiu: ${antesPct} -> ${depoisPct}`);
+await admin.locator('.estimate-alert').first().waitFor();
+await shot(admin, '19-admin-albuns-estimativa');
+await admin.getByRole('button', { name: 'Desfazer' }).click();
+step('estimador recalcula ao mudar um parâmetro');
+
+await admin.getByRole('button', { name: 'Novo álbum' }).click();
+await admin.getByLabel('Título').fill('Sobreposto E2E');
+await admin.getByLabel('Pronto para ir ao ar').check();
+await admin.getByRole('button', { name: 'Salvar', exact: true }).click();
+await admin.getByText('Já existe um álbum pronto nesse período').waitFor();
+await shot(admin, '20-admin-sobreposicao');
+await admin.getByLabel('Pronto para ir ao ar').uncheck();
+await admin.getByLabel('Título').fill(`Rascunho ${stamp}`);
+await admin.getByRole('button', { name: 'Salvar', exact: true }).click();
+await admin.getByText(`Rascunho ${stamp}`).waitFor();
+admin.once('dialog', (dialog) => dialog.accept());
+await admin.locator('li', { hasText: `Rascunho ${stamp}` }).getByRole('button', { name: 'Apagar' }).click();
+await admin.getByText(`Rascunho ${stamp}`).waitFor({ state: 'detached' });
+step('álbum sobreposto é recusado; rascunho é criado e apagado');
+
+// ---- Meus álbuns: em andamento com timer; depois do fim, só leitura com o resumo
+await ana.goto(`${BASE}/albuns`);
+await ana.getByRole('region', { name: 'Álbum em andamento' }).getByRole('timer').waitFor();
+await ana.getByText('Termina em').waitFor();
+await shot(ana, '21-meus-albuns');
+step('meus álbuns mostra o álbum em andamento e o timer');
+
+const album = (script) => execFileSync(join(backend, '.venv/bin/python'), ['-c', `
+from datetime import timedelta
+from sqlalchemy import select
+from app.db import SessionLocal
+from app.models import Album
+from app.services.core import now
+with SessionLocal() as db:
+    album = db.scalar(select(Album).where(Album.state == 'ready').order_by(Album.id).limit(1))
+    ${script}
+    db.commit()
+`], { cwd: backend });
+const fimOriginal = execFileSync(join(backend, '.venv/bin/python'), ['-c', `
+from sqlalchemy import select
+from app.db import SessionLocal
+from app.models import Album
+with SessionLocal() as db:
+    print(db.scalar(select(Album).where(Album.state == 'ready').order_by(Album.id).limit(1)).ends_at.isoformat())
+`], { cwd: backend }).toString().trim();
+try {
+  album(`album.ends_at = now() - timedelta(seconds=5)`);
+  await ana.goto(`${BASE}/albuns`);
+  await ana.getByRole('heading', { name: 'Nenhum álbum em andamento' }).waitFor();
+  await ana.getByRole('link', { name: 'Ver álbum' }).waitFor();
+  await shot(ana, '22-album-encerrado-na-conta');
+  await ana.getByRole('link', { name: 'Ver álbum' }).click();
+  await ana.getByText('somente leitura').waitFor();
+  await ana.getByRole('button', { name: /Tubarões da Engenharia/ }).click();
+  await ana.locator('.album-panel [data-slot]:not([disabled])').first().waitFor();
+  await shot(ana, '23-album-somente-leitura');
+  if (await ana.locator('.tray-tile').count()) problems.push('álbum encerrado não deveria ter bandeja');
+  await ana.goto(BASE);
+  await ana.getByRole('heading', { name: 'Nenhum álbum em andamento' }).waitFor();
+  await ana.getByRole('link', { name: /Pacotes/ }).click();
+  await ana.getByText('Os pacotes voltam quando o próximo álbum começar').waitFor();
+  const recusa = await ana.request.post(`${BASE}/api/album/paste-all`, { headers: { 'X-Requested-With': 'album' } });
+  if (recusa.status() !== 409) problems.push(`colar em álbum encerrado deveria dar 409, deu ${recusa.status()}`);
+  step('álbum encerrado: fica na conta, abre só para leitura e recusa escrita');
+} finally {
+  album(`from datetime import datetime; album.ends_at = datetime.fromisoformat('${fimOriginal}')`);
+}
+
 await browser.close();
 if (problems.length) {
   console.error('\nProblemas:\n' + problems.join('\n'));

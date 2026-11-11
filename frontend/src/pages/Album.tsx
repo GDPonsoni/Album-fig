@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, post, type AlbumIndex, type Card, type PageDetail, type PageMeta, type Slot } from '../api';
 import { useAuth } from '../auth';
 import { StickerSheet } from '../components/StickerSheet';
@@ -13,8 +13,8 @@ function CoverPage({ index, goTo }: { index: AlbumIndex; goTo: (page: number) =>
   return (
     <article className="album-page cover">
       <div className="cover-band">
-        <p className="cover-kicker">Calourada</p>
-        <h1 className="cover-title">Álbum de figurinhas</h1>
+        <p className="cover-kicker">Álbum de figurinhas</p>
+        <h1 className="cover-title">{index.album?.title ?? 'Álbum'}</h1>
       </div>
       <div className="cover-progress">
         <strong>{percent}%</strong>
@@ -180,8 +180,11 @@ function TrayRow({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function AlbumPage() {
+/** Sem `albumId` é o álbum em andamento; com ele, um álbum da conta (encerrado abre só para leitura). */
+export function AlbumPage({ albumId }: { albumId?: number }) {
   const { user } = useAuth();
+  const base = albumId ? `/albums/${albumId}` : '/album';
+  const root = albumId ? `/albuns/${albumId}` : '/';
   const [index, setIndex] = useState<AlbumIndex | null>(null);
   const [details, setDetails] = useState<Record<string, PageDetail>>({});
   const navigate = useNavigate();
@@ -199,12 +202,12 @@ export function AlbumPage() {
   const lastIndex = pages.length - 1;
   const safeCurrent = Math.min(current, lastIndex);
 
-  const loadIndex = useCallback(() => api<AlbumIndex>('/album').then(setIndex), []);
+  const loadIndex = useCallback(() => api<AlbumIndex>(base).then(setIndex), [base]);
   const loadPage = useCallback(async (page: PageMeta) => {
-    const detail = await api<PageDetail>(`/album/orgs/${page.org_id}/pages/${page.page_no}`);
+    const detail = await api<PageDetail>(`${base}/orgs/${page.org_id}/pages/${page.page_no}`);
     setDetails((all) => ({ ...all, [pageKey(page)]: detail }));
     return detail;
-  }, []);
+  }, [base]);
 
   useEffect(() => {
     loadIndex().catch((err) => setError(err.message));
@@ -225,12 +228,12 @@ export function AlbumPage() {
     (target: number) => {
       if (target === 0) {
         if (cameFromCover) navigate(-1);
-        else navigate('/', { replace: true });
+        else navigate(root, { replace: true });
       } else {
-        navigate(`/?pagina=${target}`, safeCurrent === 0 ? { state: { fromCover: true } } : { replace: true, state: location.state });
+        navigate(`${root}?pagina=${target}`, safeCurrent === 0 ? { state: { fromCover: true } } : { replace: true, state: location.state });
       }
     },
-    [cameFromCover, location.state, navigate, safeCurrent],
+    [cameFromCover, location.state, navigate, root, safeCurrent],
   );
 
   const animating = useRef(false);
@@ -353,18 +356,19 @@ export function AlbumPage() {
     });
   }, []);
 
-  // Só troca o estado local pelo do servidor quando não há mais nenhum POST em curso,
-  // para uma resposta antiga não desfazer na tela uma colagem mais recente.
+  // Só troca o estado local pelo do servidor quando não há POST nem voo em curso: uma resposta
+  // antiga não pode desfazer na tela uma colagem mais recente, e o estado do servidor não pode
+  // chegar antes do pouso (a figurinha apareceria no espaço no meio do voo e contaria em dobro).
   const reconcile = useCallback(async () => {
-    if (pendingPosts.current > 0) return;
+    if (pendingPosts.current > 0 || animBusy.current) return;
     const run = ++reconcileRun.current;
     const metas = [...dirty.current.entries()];
     try {
       const [fresh, ...pagesData] = await Promise.all([
-        api<AlbumIndex>('/album'),
-        ...metas.map(([, page]) => api<PageDetail>(`/album/orgs/${page.org_id}/pages/${page.page_no}`).catch(() => null)),
+        api<AlbumIndex>(base),
+        ...metas.map(([, page]) => api<PageDetail>(`${base}/orgs/${page.org_id}/pages/${page.page_no}`).catch(() => null)),
       ]);
-      if (pendingPosts.current > 0 || run !== reconcileRun.current) return;
+      if (pendingPosts.current > 0 || animBusy.current || run !== reconcileRun.current) return;
       setIndex(fresh);
       setDetails((all) => {
         const next = { ...all };
@@ -380,7 +384,7 @@ export function AlbumPage() {
     } catch {
       // Sem rede: o estado otimista fica até a próxima reconciliação.
     }
-  }, []);
+  }, [base]);
 
   const track = useCallback(
     (request: Promise<unknown>, ids: number[]) => {
@@ -456,6 +460,7 @@ export function AlbumPage() {
         window.setTimeout(() => setLastPasted(null), 500);
       } finally {
         animBusy.current = false;
+        reconcile(); // se o servidor já respondeu, é agora que o estado dele entra
       }
     })();
   };
@@ -500,9 +505,11 @@ export function AlbumPage() {
     void Promise.all(running).then((landed) => {
       for (const id of ids) flights.current.delete(id);
       animBusy.current = false;
-      if (landed.includes(false) || ids.some((id) => failed.current.has(id))) return;
-      applyPasted(cards);
-      buzz([15, 30, 15]);
+      if (!landed.includes(false) && !ids.some((id) => failed.current.has(id))) {
+        applyPasted(cards);
+        buzz([15, 30, 15]);
+      }
+      reconcile();
     });
   };
 
@@ -510,6 +517,20 @@ export function AlbumPage() {
     return <div className="screen">{error ? <Message>{error}</Message> : <div className="album-skeleton" />}</div>;
   }
 
+  if (!index.album) {
+    return (
+      <div className="screen">
+        <h1 className="screen-title">Álbum</h1>
+        <section className="panel paper empty-album">
+          <h2>Nenhum álbum em andamento</h2>
+          <p className="muted">Quando o próximo álbum começar, ele aparece aqui. Os álbuns que você já jogou continuam na sua conta.</p>
+          <Link className="btn btn-primary" to="/albuns">Meus álbuns</Link>
+        </section>
+      </div>
+    );
+  }
+
+  const readOnly = index.read_only;
   const meta = pages[safeCurrent];
   const trayCards = index.tray.filter((card) => !hidden.has(card.id));
   const renderPage = (position: number) => {
@@ -526,7 +547,7 @@ export function AlbumPage() {
 
   return (
     <div className="album">
-      {!user?.verified ? <VerifyBanner /> : null}
+      {!user?.verified && !readOnly ? <VerifyBanner /> : null}
       <div className="album-bar">
         {safeCurrent > 0 ? (
           <button className="back-to-cover" onClick={() => goToPage(0)}>
@@ -559,34 +580,40 @@ export function AlbumPage() {
 
       <Message>{error}</Message>
 
-      <section className={`tray${trayCards.length ? '' : ' tray-empty'}`} aria-label="Bandeja de figurinhas para colar">
-        {trayCards.length ? (
-          <>
-            <div className="tray-head">
-              <p className="tray-label"><b>{trayCards.length}</b> para colar · toque para colar, deslize para ver mais</p>
-              {trayCards.length > 1 ? (
-                <button className="tray-all" disabled={!user?.verified} onClick={pasteAll}>Colar tudo</button>
-              ) : null}
-            </div>
-            <TrayRow>
-              {trayCards.map((card) => (
-                <button
-                  key={card.id}
-                  className="tray-tile"
-                  data-tray={card.id}
-                  aria-label={`Colar ${card.name}`}
-                  disabled={!user?.verified}
-                  onClick={(event) => paste(card, event.currentTarget)}
-                >
-                  <StickerArt card={card} />
-                </button>
-              ))}
-            </TrayRow>
-          </>
-        ) : (
-          <p className="tray-label">{hidden.size ? 'Colando…' : 'Bandeja vazia. Abra um pacote para ganhar figurinhas.'}</p>
-        )}
-      </section>
+      {readOnly ? (
+        <section className="tray tray-empty" aria-label="Álbum encerrado">
+          <p className="tray-label">Álbum encerrado · somente leitura. <Link to="/albuns">Meus álbuns</Link></p>
+        </section>
+      ) : (
+        <section className={`tray${trayCards.length ? '' : ' tray-empty'}`} aria-label="Bandeja de figurinhas para colar">
+          {trayCards.length ? (
+            <>
+              <div className="tray-head">
+                <p className="tray-label"><b>{trayCards.length}</b> para colar · toque para colar, deslize para ver mais</p>
+                {trayCards.length > 1 ? (
+                  <button className="tray-all" disabled={!user?.verified} onClick={pasteAll}>Colar tudo</button>
+                ) : null}
+              </div>
+              <TrayRow>
+                {trayCards.map((card) => (
+                  <button
+                    key={card.id}
+                    className="tray-tile"
+                    data-tray={card.id}
+                    aria-label={`Colar ${card.name}`}
+                    disabled={!user?.verified}
+                    onClick={(event) => paste(card, event.currentTarget)}
+                  >
+                    <StickerArt card={card} />
+                  </button>
+                ))}
+              </TrayRow>
+            </>
+          ) : (
+            <p className="tray-label">{hidden.size ? 'Colando…' : 'Bandeja vazia. Abra um pacote para ganhar figurinhas.'}</p>
+          )}
+        </section>
+      )}
 
       {open ? <StickerSheet card={open} onClose={closeBack} /> : null}
     </div>
@@ -664,4 +691,10 @@ function flyIntoAlbum(card: Card, from: DOMRect, stage: DOMRect, delay: number):
     return landed;
   };
   return { finished: animation.finished.then(() => done(true), () => done(false)), cancel: () => animation.cancel() };
+}
+
+/** Rota /albuns/:id: um álbum da conta. Trocar de álbum remonta a tela, para não misturar estado. */
+export function AlbumByIdPage() {
+  const id = Number(useParams().id);
+  return Number.isInteger(id) && id > 0 ? <AlbumPage key={id} albumId={id} /> : <AlbumPage />;
 }

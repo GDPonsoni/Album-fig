@@ -71,11 +71,13 @@ function toForm(fields: FieldDef[], row: Row) {
   return values;
 }
 
-function CrudSection({ title, path, fields, columns, defaults, extraRowAction }: { title: string; path: string; fields: FieldDef[]; columns: (row: Row) => string; defaults: Row; extraRowAction?: (row: Row, reload: () => void) => React.ReactNode }) {
+function CrudSection({ title, path, fields, columns, defaults, albumId }: { title: string; path: string; fields: FieldDef[]; columns: (row: Row) => string; defaults: Row; albumId?: number }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [editing, setEditing] = useState<Row | null>(null);
   const [error, setError] = useState('');
-  const load = useCallback(() => api<Row[]>(path).then(setRows).catch((e) => setError(e.message)), [path]);
+  // Com `albumId`, a lista e o que for salvo são daquele álbum.
+  const listPath = albumId ? `${path}?album_id=${albumId}` : path;
+  const load = useCallback(() => api<Row[]>(listPath).then(setRows).catch((e) => setError(e.message)), [listPath]);
   useEffect(() => {
     load();
   }, [load]);
@@ -84,7 +86,7 @@ function CrudSection({ title, path, fields, columns, defaults, extraRowAction }:
     event.preventDefault();
     setError('');
     try {
-      const body: Row = {};
+      const body: Row = albumId ? { album_id: albumId } : {};
       for (const field of fields) {
         const value = editing![field.key];
         if (field.type === 'json') body[field.key] = JSON.parse(value || 'null');
@@ -136,7 +138,6 @@ function CrudSection({ title, path, fields, columns, defaults, extraRowAction }:
           <li key={row.id}>
             <span>{columns(row)}</span>
             <span className="admin-row-actions">
-              {extraRowAction?.(row, load)}
               <button className="link" onClick={() => setEditing({ ...toForm(fields, row), id: row.id })}>Editar</button>
               <button className="link danger" onClick={() => remove(row)}>Apagar</button>
             </span>
@@ -156,10 +157,10 @@ function useOptions(path: string, label: (row: Row) => string) {
   return options;
 }
 
-function Metrics() {
+function Metrics({ albumId }: { albumId?: number }) {
   const [data, setData] = useState<Row | null>(null);
   useEffect(() => {
-    api('/admin/metrics').then(setData).catch(() => {});
+    api(`/admin/metrics${albumId ? `?album_id=${albumId}` : ''}`).then(setData).catch(() => {});
   }, []);
   if (!data) return null;
   const tiles: [string, string | number][] = [
@@ -226,13 +227,14 @@ function CodeSheet({ codes, onClose }: { codes: { code: string; label: string }[
   );
 }
 
-function Codes() {
+function Codes({ albumId }: { albumId?: number }) {
   const [sheet, setSheet] = useState<{ code: string; label: string }[] | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [form, setForm] = useState<Row>({ pack_type_id: null, label: '', count: 10, expires_at: '' });
   const [error, setError] = useState('');
-  const packs = useOptions('/admin/pack-types', (row) => row.name);
-  const load = useCallback(() => api<Row[]>('/admin/codes').then(setRows).catch((e) => setError(e.message)), []);
+  const scope = albumId ? `?album_id=${albumId}` : '';
+  const packs = useOptions(`/admin/pack-types${scope}`, (row) => row.name);
+  const load = useCallback(() => api<Row[]>(`/admin/codes${scope}`).then(setRows).catch((e) => setError(e.message)), [scope]);
   useEffect(() => {
     load();
   }, [load]);
@@ -321,6 +323,7 @@ function ConfigEditor() {
   );
 }
 
+const ALBUM_STATUS: Record<string, string> = { draft: 'rascunho', scheduled: 'agendado', active: 'em andamento', ended: 'encerrado' };
 const TABS = ['Métricas', 'Orgs', 'Figurinhas', 'Pacotes', 'Raridades', 'Códigos', 'Parâmetros'] as const;
 
 export default function AdminPage() {
@@ -328,6 +331,17 @@ export default function AdminPage() {
   const orgs = useOptions('/admin/orgs', (row) => row.name);
   const rarities = useOptions('/admin/rarities', (row) => row.name);
   const rarityHint = rarities.map((r) => `${r.value} = ${r.label}`).join(', ');
+  // Figurinhas, pacotes, códigos e métricas são sempre de um álbum.
+  const [albums, setAlbums] = useState<Row[]>([]);
+  const [albumId, setAlbumId] = useState<number | undefined>();
+  useEffect(() => {
+    api<Row[]>('/admin/albums')
+      .then((rows) => {
+        setAlbums(rows);
+        setAlbumId((rows.find((row) => row.status === 'active') ?? rows[0])?.id);
+      })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="admin">
@@ -335,46 +349,38 @@ export default function AdminPage() {
         <h1>Painel admin</h1>
         <Link to="/">Voltar ao álbum</Link>
       </header>
+      <div className="admin-album">
+        <label className="field">
+          <span>Álbum em edição</span>
+          <select value={albumId ?? ''} onChange={(e) => setAlbumId(Number(e.target.value) || undefined)}>
+            {albums.length ? null : <option value="">Nenhum álbum ainda</option>}
+            {albums.map((row) => <option key={row.id} value={row.id}>{row.title} ({ALBUM_STATUS[row.status] ?? row.status})</option>)}
+          </select>
+        </label>
+        <Link className="btn" to="/admin/albums">Álbuns, capítulos e estimativa</Link>
+      </div>
       <nav className="admin-tabs">
         {TABS.map((name) => <button key={name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>{name}</button>)}
       </nav>
-      {tab === 'Métricas' ? <Metrics /> : null}
+      {tab === 'Métricas' ? <Metrics key={albumId} albumId={albumId} /> : null}
       {tab === 'Orgs' ? (
         <CrudSection
           title="Orgs"
           path="/admin/orgs"
           columns={(row) => row.name}
-          defaults={{ theme_color: '#1d4ed8', sort_order: 0 }}
+          defaults={{ theme_color: '#1d4ed8' }}
           fields={[
             { key: 'name', label: 'Nome' },
             { key: 'description', label: 'Apresentação', type: 'textarea', optional: true },
             { key: 'logo_url', label: 'Logo', type: 'image', optional: true, uploadName: (row) => `orgs/${row.name || 'sem-nome'}/logo` },
             { key: 'theme_color', label: 'Cor tema', type: 'color' },
-            { key: 'sort_order', label: 'Ordem', type: 'number' },
-            { key: 'mosaic_image_url', label: 'Imagem do mosaico', type: 'image', optional: true, uploadName: (row) => `orgs/${row.name || 'sem-nome'}/mosaico` },
           ]}
-          extraRowAction={(row) => (
-            <button
-              className="link"
-              onClick={async () => {
-                const shape = window.prompt('Colunas x linhas do mosaico. As peças atuais serão substituídas.', `${row.mosaic_cols}x${row.mosaic_rows}`);
-                const match = shape?.match(/^(\d+)\s*x\s*(\d+)$/);
-                if (!match) return;
-                try {
-                  const result = await post(`/admin/orgs/${row.id}/mosaic`, { cols: Number(match[1]), rows: Number(match[2]), rarity_id: rarities[0]?.value });
-                  window.alert(`${result.pieces} peças geradas.`);
-                } catch (e) {
-                  window.alert((e as Error).message);
-                }
-              }}
-            >
-              Mosaico
-            </button>
-          )}
         />
       ) : null}
       {tab === 'Figurinhas' ? (
         <CrudSection
+          key={albumId}
+          albumId={albumId}
           title="Figurinhas"
           path="/admin/stickers"
           columns={(row) => `#${row.number} ${row.name}${row.active ? '' : ' (inativa)'}`}
@@ -405,6 +411,8 @@ export default function AdminPage() {
       ) : null}
       {tab === 'Pacotes' ? (
         <CrudSection
+          key={albumId}
+          albumId={albumId}
           title="Tipos de pacote"
           path="/admin/pack-types"
           columns={(row) => `${row.name}: ${row.stickers_per_pack} figurinhas`}
@@ -413,7 +421,7 @@ export default function AdminPage() {
             { key: 'slug', label: 'Identificador', hint: 'Usado nos parâmetros de concessão diária.' },
             { key: 'name', label: 'Nome' },
             { key: 'stickers_per_pack', label: 'Figurinhas por pacote', type: 'number' },
-            { key: 'rarity_weights', label: 'Pesos de raridade', type: 'json', hint: `{"id": peso}. Ids: ${rarityHint}. Ausente usa o peso geral.` },
+            { key: 'rarity_weights', label: 'Pesos de raridade', type: 'json', hint: `{"id": peso}. Ids: ${rarityHint}. No álbum, o que faltar é preenchido com o peso geral e fica gravado.` },
             { key: 'guaranteed_min_rarity', label: 'Garantia mínima', type: 'select', options: rarities, optional: true },
             { key: 'org_filter', label: 'Só desta org', type: 'select', options: orgs, optional: true },
           ]}
@@ -433,7 +441,7 @@ export default function AdminPage() {
           ]}
         />
       ) : null}
-      {tab === 'Códigos' ? <Codes /> : null}
+      {tab === 'Códigos' ? <Codes key={albumId} albumId={albumId} /> : null}
       {tab === 'Parâmetros' ? <ConfigEditor /> : null}
     </div>
   );

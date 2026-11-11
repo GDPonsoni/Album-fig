@@ -58,7 +58,39 @@ export interface PageMeta {
   filled: number;
 }
 
+export interface AlbumInfo {
+  id: number;
+  title: string;
+  cover_url: string | null;
+  starts_at: string;
+  ends_at: string;
+  status: 'draft' | 'scheduled' | 'active' | 'ended';
+}
+
+export interface AlbumStats {
+  pasted: number;
+  total_stickers: number;
+  received_total: number;
+  duplicates: number;
+  trades_done: number;
+  completed_at?: string;
+}
+
+export interface AlbumSummary extends AlbumInfo {
+  joined_at: string | null;
+  stats: AlbumStats;
+}
+
+export interface MyAlbums {
+  active: AlbumSummary | null;
+  ended: AlbumSummary[];
+  upcoming: { title: string; starts_at: string } | null;
+  server_now: string;
+}
+
 export interface AlbumIndex {
+  album: AlbumInfo | null; // null = nenhum álbum em andamento
+  read_only: boolean;
   pages: PageMeta[];
   orgs: { id: number; name: string; color: string; logo_url: string | null; total: number; filled: number }[];
   total: number;
