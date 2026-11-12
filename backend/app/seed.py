@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.api.auth import hasher
 from app.db import SessionLocal
-from app.models import AlbumChapter, Org, Rarity, RedeemCode, Sticker, User
+from app.models import AlbumChapter, Org, Rarity, RedeemCode, RoleGrant, Sticker, User
 from app.services import albums, content
 from app.services.codes import generate_code
 from app.services.images import save_webp
@@ -103,6 +103,7 @@ def seed_demo() -> None:
             db, university.id, "Calourada", today - timedelta(days=1), today + timedelta(days=90), state="ready"
         )
         number = 1
+        chapters: list[AlbumChapter] = []
         for order, (name, color, description) in enumerate(ORGS):
             org = Org(
                 university_id=university.id,
@@ -121,6 +122,7 @@ def seed_demo() -> None:
             )
             db.add(chapter)
             db.flush()
+            chapters.append(chapter)
             for page_no, template in enumerate(PAGE_TEMPLATES, start=1):
                 for size, x, y, w, h in template:
                     person = f"{rng.choice(FIRST)} {rng.choice(LAST)}"
@@ -153,6 +155,7 @@ def seed_demo() -> None:
         accounts = [("ana@example.com", "Ana", False), ("bia@example.com", "Bia", False)]
         if not settings.is_prod:
             accounts.insert(0, ("admin@example.com", "Admin", True))
+            accounts.insert(1, ("editor@example.com", "Editor", False))
         password = hasher.hash(plain)
         verified = datetime.now(UTC)
         for email, nickname, is_admin in accounts:
@@ -162,6 +165,11 @@ def seed_demo() -> None:
                     email_verified_at=verified, university_id=university.id,
                 )
             )
+
+        db.flush()
+        if not settings.is_prod:
+            editor = db.scalar(select(User).where(User.email == "editor@example.com"))
+            db.add_all(RoleGrant(user_id=editor.id, chapter_id=chapter.id) for chapter in chapters[:2])
 
         premium = album_pack_type(db, album.id, "premium")
         codes = [generate_code() for _ in range(3)]

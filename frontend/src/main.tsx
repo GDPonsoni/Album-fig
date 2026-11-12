@@ -2,7 +2,7 @@ import '@fontsource/bowlby-one';
 import '@fontsource-variable/figtree';
 import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, RequireAuth } from './auth';
 import { Layout } from './components/Layout';
 import { Splash } from './components/ui';
@@ -10,7 +10,6 @@ import { initFx } from './fx';
 import { AccountPage } from './pages/Account';
 import { AlbumByIdPage, AlbumPage } from './pages/Album';
 import { ConfirmPage, ForgotPage, LoginPage, RegisterPage, ResetPage } from './pages/Auth';
-import { MyAlbumsPage } from './pages/MyAlbums';
 import { PacksPage } from './pages/Packs';
 import { RedeemLinkPage } from './pages/Redeem';
 import { TradeHome, TradeSession } from './pages/Trade';
@@ -74,12 +73,12 @@ createRoot(document.getElementById('root')!).render(
           <Route
             element={
               <RequireAuth>
-                <Layout />
+                <Layout panes={{ '/': <AlbumPage />, '/pacotes': <PacksPage />, '/trocar': <TradeHome />, '/conta': <AccountPage /> }} />
               </RequireAuth>
             }
           >
             <Route path="/" element={<AlbumPage />} />
-            <Route path="/albuns" element={<MyAlbumsPage />} />
+            <Route path="/albuns" element={<Navigate to="/conta" replace />} />
             <Route path="/albuns/:id" element={<AlbumByIdPage />} />
             <Route path="/pacotes" element={<PacksPage />} />
             <Route path="/r/:codigo" element={<RedeemLinkPage />} />

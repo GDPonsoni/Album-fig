@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Link, useOutletContext } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { useShell } from '../components/Layout';
 import { api, post, type AlbumInfo, type Card, type GrantView } from '../api';
 import { useAuth } from '../auth';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
@@ -147,7 +148,7 @@ function Opener({ grant, onClose, onNext, onOpened }: { grant: GrantView; onClos
     return (
       <div className="overlay opener" onClick={next}>
         <p className="opener-count">{shown + 1} de {items.length}</p>
-        <div key={shown} className="reveal">
+        <div key={shown} className={`reveal${item.rarity.rank >= 2 ? ' reveal-rare' : ''}`} style={{ ['--glow' as string]: item.rarity.color }}>
           <StickerArt card={item} shine={item.rarity.rank >= 2} />
           <em className={item.is_new ? 'seal-new' : 'seal-dup'}>{item.is_new ? 'Nova' : 'Repetida'}</em>
         </div>
@@ -175,6 +176,7 @@ function Opener({ grant, onClose, onNext, onOpened }: { grant: GrantView; onClos
         onClick={tear}
         onKeyDown={(event) => event.key === 'Enter' && tear()}
       >
+        {stage === 'tearing' ? <div className="burst" aria-hidden="true">{Array.from({ length: 10 }, (_, i) => <i key={i} style={{ ['--a' as string]: `${i * 36}deg` }} />)}</div> : null}
         <div className="foil-strip"><Wrapper grant={grant} /></div>
         <div className="foil-body"><Wrapper grant={grant} /></div>
       </div>
@@ -379,7 +381,7 @@ function RedeemForm({ onRedeemed, disabled, code, setCode }: { onRedeemed: (gran
 
 export function PacksPage() {
   const { user } = useAuth();
-  const { setStock } = useOutletContext<{ setStock: (n: number) => void }>();
+  const { setStock } = useShell();
   const [data, setData] = useState<Stock | null>(null);
   const [opening, setOpening] = useState<GrantView | null>(null);
   const [error, setError] = useState('');
@@ -423,7 +425,7 @@ export function PacksPage() {
         <section className="panel paper empty-album">
           <h2>Nenhum álbum em andamento</h2>
           <p className="muted">Os pacotes voltam quando o próximo álbum começar.</p>
-          <Link className="btn" to="/albuns">Meus álbuns</Link>
+          <Link className="btn" to="/conta">Meus álbuns</Link>
         </section>
       ) : null}
       {data?.album ? (

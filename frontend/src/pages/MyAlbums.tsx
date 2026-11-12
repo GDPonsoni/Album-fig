@@ -65,7 +65,7 @@ function Cover({ album }: { album: AlbumSummary }) {
   return album.cover_url ? <img className="album-cover" src={album.cover_url} alt="" loading="lazy" /> : <div className="album-cover album-cover-blank" aria-hidden="true">{album.title.slice(0, 1)}</div>;
 }
 
-export function MyAlbumsPage() {
+export function MyAlbumsSection() {
   const [data, setData] = useState<MyAlbums | null>(null);
   const [error, setError] = useState('');
   const load = () => api<MyAlbums>('/albums/mine').then(setData).catch((err) => setError(err.message));
@@ -75,8 +75,8 @@ export function MyAlbumsPage() {
   const left = useTimeLeft(data?.active?.ends_at, data?.server_now, load);
 
   return (
-    <div className="screen">
-      <h1 className="screen-title">Meus álbuns</h1>
+    <section className="my-albums" aria-label="Meus álbuns">
+      <h2 className="extras-title">Meus álbuns</h2>
       <Message>{error}</Message>
       {data ? (
         <>
@@ -109,7 +109,7 @@ export function MyAlbumsPage() {
             </section>
           )}
 
-          <h2 className="extras-title">Encerrados</h2>
+          <h3 className="extras-title">Encerrados</h3>
           {data.ended.length ? (
             <ul className="album-list">
               {data.ended.map((album) => (
@@ -133,6 +133,6 @@ export function MyAlbumsPage() {
           )}
         </>
       ) : null}
-    </div>
+    </section>
   );
 }

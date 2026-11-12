@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { post } from '../api';
 import { useAuth } from '../auth';
 import { Message, VerifyBanner } from '../components/ui';
+import { MyAlbumsSection } from './MyAlbums';
 
 /** Verificação em duas etapas do superadmin: sem ela não dá para aprovar, publicar nem conceder papéis. */
 function TwoFactor() {
@@ -138,6 +139,7 @@ export function AccountPage() {
         </dl>
         <p className="muted">Seu e-mail não aparece para os outros jogadores. Os álbuns que você jogou ficam guardados na sua conta.</p>
       </section>
+      <MyAlbumsSection />
       {user.editor_chapters ? <Link className="btn btn-primary" to="/editor">Editar meu capítulo</Link> : null}
       {user.is_admin ? <TwoFactor /> : null}
       {user.is_admin ? <Link className="btn" to="/admin">Painel admin</Link> : null}

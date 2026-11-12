@@ -440,7 +440,7 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
         <section className="panel paper empty-album">
           <h2>Nenhum álbum em andamento</h2>
           <p className="muted">Quando o próximo álbum começar, ele aparece aqui. Os álbuns que você já jogou continuam na sua conta.</p>
-          <Link className="btn btn-primary" to="/albuns">Meus álbuns</Link>
+          <Link className="btn btn-primary" to="/conta">Meus álbuns</Link>
         </section>
       </div>
     );
@@ -465,19 +465,23 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
     <div className="album">
       {!user?.verified && !readOnly ? <VerifyBanner /> : null}
       <div className="album-bar">
-        {safeCurrent > 0 ? (
-          <button className="back-to-cover" onClick={() => goToPage(0)}>
-            <span aria-hidden="true">←</span> Capa
-          </button>
-        ) : null}
+        <div className="album-bar-side">
+          {safeCurrent > 0 ? (
+            <button className="back-to-cover" onClick={() => goToPage(0)}>
+              <span aria-hidden="true">←</span> Capa
+            </button>
+          ) : null}
+        </div>
         <div className="album-bar-text">
           <strong>{meta ? meta.org_name : 'Capa'}</strong>
           <small>{meta ? `${meta.kind === 'mosaic' ? 'Mosaico' : `Página ${meta.page_no}`} · ${meta.filled}/${meta.total}` : `${index.filled} de ${index.total} figurinhas`}</small>
         </div>
-        {safeCurrent > 0 ? (
-          <button className="round" aria-label="Página anterior" onClick={() => slideTo(safeCurrent - 1)}>‹</button>
-        ) : null}
-        <button className="round" aria-label="Próxima página" disabled={safeCurrent === lastIndex} onClick={() => slideTo(safeCurrent + 1)}>›</button>
+        <div className="album-bar-side">
+          {safeCurrent > 0 ? (
+            <button className="round" aria-label="Página anterior" onClick={() => slideTo(safeCurrent - 1)}>‹</button>
+          ) : null}
+          <button className="round" aria-label="Próxima página" disabled={safeCurrent === lastIndex} onClick={() => slideTo(safeCurrent + 1)}>›</button>
+        </div>
       </div>
 
       <div className="album-stage" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}>
@@ -498,7 +502,7 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
 
       {readOnly ? (
         <section className="tray tray-empty" aria-label="Álbum encerrado">
-          <p className="tray-label">Álbum encerrado · somente leitura. <Link to="/albuns">Meus álbuns</Link></p>
+          <p className="tray-label">Álbum encerrado · somente leitura. <Link to="/conta">Meus álbuns</Link></p>
         </section>
       ) : (
         <section className={`tray${trayCards.length ? '' : ' tray-empty'}`} aria-label="Bandeja de figurinhas para colar">
