@@ -46,7 +46,7 @@ export default function PromoPage() {
       <section className="panel paper">
         <h2>Gerar lote</h2>
         {data.album ? (
-          <p className="muted">Álbum {data.album.title}. Você ainda pode gerar <b>{data.left}</b> de {data.limit} códigos nas próximas 24 horas.</p>
+          <p className="muted">Álbum {data.album.title}. {data.unlimited ? 'Superadmin: sem limite de cota.' : <>Você ainda pode gerar <b>{data.left}</b> de {data.limit} códigos nas próximas 24 horas.</>}</p>
         ) : (
           <p className="muted">Não há álbum em andamento.</p>
         )}

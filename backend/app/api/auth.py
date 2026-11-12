@@ -234,7 +234,7 @@ def me(user: User = Depends(current_user), session: UserSession = Depends(curren
         )
     ) or 0
     view["reviewer_chapters"] = len(reviewer_chapter_ids(db, user))
-    view["promoter"] = promoter_grant(db, user.id) is not None
+    view["promoter"] = user.is_admin or promoter_grant(db, user.id) is not None
     return view
 
 

@@ -52,17 +52,21 @@ export function useMfa(): { run: <T>(action: () => Promise<T>) => Promise<T>; pr
       <form className="panel paper" onSubmit={submit}>
         <h2>Código de duas etapas</h2>
         <p className="muted">Digite o código do app autenticador (ou um código de recuperação).</p>
-        <input
-          aria-label="Código"
-          autoFocus
-          autoComplete="one-time-code"
-          inputMode="text"
-          required
-          minLength={6}
-          maxLength={20}
-          value={code}
-          onChange={(event) => setCode(event.target.value)}
-        />
+        <label className="field"><span>Código</span>
+          <input
+            className="code-input"
+            autoFocus
+            autoComplete="one-time-code"
+            autoCapitalize="off"
+            spellCheck={false}
+            inputMode="text"
+            required
+            minLength={6}
+            maxLength={20}
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+          />
+        </label>
         {error ? <p className="message message-error" role="alert">{error}</p> : null}
         <button className="btn btn-primary" disabled={busy}>Confirmar</button>
         <button type="button" className="btn" onClick={cancel}>Cancelar</button>
