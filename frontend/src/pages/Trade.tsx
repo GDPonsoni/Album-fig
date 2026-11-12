@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api, post, type Card, type TradeView } from '../api';
 import { useAuth } from '../auth';
+import { useOnActivate, useTabActive } from '../components/Layout';
 import { QrScanner } from '../components/QrScanner';
 import { StickerSheet } from '../components/StickerSheet';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
@@ -46,7 +47,7 @@ export function TradeHome() {
   const [dupes, setDupes] = useState<Duplicate[] | null>(null);
   const [scanning, setScanning] = useState(false);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     api<{ token: string | null }>('/trades/current')
       .then((result) => result.token && navigate(`/trocar/${result.token}`, { replace: true }))
       .catch(() => {});
@@ -54,6 +55,13 @@ export function TradeHome() {
       .then(setDupes)
       .catch(() => {});
   }, [navigate]);
+  useEffect(refresh, [refresh]);
+  useOnActivate(refresh);
+  // A aba continua montada ao sair: a câmera não pode ficar ligada escondida.
+  const tabActive = useTabActive();
+  useEffect(() => {
+    if (!tabActive) setScanning(false);
+  }, [tabActive]);
 
   const start = async () => {
     setBusy(true);

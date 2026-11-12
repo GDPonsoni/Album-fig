@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { NavLink, Outlet, UNSAFE_LocationContext, useLocation, useNavigate, useNavigationType, type Location } from 'react-router-dom';
 import { api } from '../api';
 
 const icons = {
@@ -11,7 +11,7 @@ const icons = {
 
 function Tab({ to, icon, label, badge }: { to: string; icon: keyof typeof icons; label: string; badge?: number }) {
   return (
-    <NavLink to={to} end={to === '/'} className="tab">
+    <NavLink to={to} end={to.startsWith('/?') || to === '/'} className="tab">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d={icons[icon]} />
       </svg>
@@ -28,6 +28,46 @@ const NO_SWIPE = '.album-stage, .tray-row, input, textarea, select, canvas, [dat
 const ShellContext = createContext<{ setStock: (n: number) => void }>({ setStock: () => {} });
 export const useShell = () => useContext(ShellContext);
 
+/** Falso enquanto a aba está escondida (mas viva); vira verdadeiro quando ela volta à tela. */
+const TabActive = createContext(true);
+
+export const useTabActive = () => useContext(TabActive);
+
+/** Roda `refresh` quando a aba volta à tela. As abas ficam montadas, então é aqui que o dado velho é renovado. */
+export function useOnActivate(refresh: () => void) {
+  const active = useContext(TabActive);
+  const latest = useRef(refresh);
+  latest.current = refresh;
+  const was = useRef(active);
+  useEffect(() => {
+    if (active && !was.current) latest.current();
+    was.current = active;
+  }, [active]);
+}
+
+/** Abas já visitadas ficam montadas: trocar de aba não refaz a tela nem as requisições. */
+function TabPane({ path, offset, visible, active, cls, children }: { path: string; offset: number; visible: boolean; active: boolean; cls: string; children: ReactNode }) {
+  const live = useLocation();
+  const navigationType = useNavigationType();
+  const frozen = useRef<Location>(live);
+  if (active) frozen.current = live;
+  // A aba escondida mantém o endereço de quando saiu (o álbum guarda a página na URL).
+  const value = { location: frozen.current, navigationType };
+  return (
+    <div
+      className={`pane${active ? cls : ''}`}
+      style={{ left: `${offset * 100}%`, right: `${-offset * 100}%`, visibility: visible ? 'visible' : 'hidden' }}
+      inert={!active}
+      aria-hidden={!active}
+      data-pane={path}
+    >
+      <TabActive.Provider value={active}>
+        <UNSAFE_LocationContext.Provider value={value}>{children}</UNSAFE_LocationContext.Provider>
+      </TabActive.Provider>
+    </div>
+  );
+}
+
 export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -41,6 +81,10 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
   const busy = useRef(false);
   const swiped = useRef(false);
 
+  // A aba Álbum volta à página em que o jogador parou.
+  const albumLink = useRef('/');
+  if (location.pathname === '/') albumLink.current = `/${location.search}`;
+
   const index = TAB_ORDER.indexOf(location.pathname);
   const prev = index > 0 ? TAB_ORDER[index - 1] : null;
   const next = index >= 0 && index < TAB_ORDER.length - 1 ? TAB_ORDER[index + 1] : null;
@@ -53,11 +97,20 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
     swiped.current = false;
   }
 
+  // Selo de pacotes: a aba Pacotes já mantém o número em dia; nas outras, confere de vez em quando.
+  const stockAt = useRef(0);
   useEffect(() => {
+    if (location.pathname === '/pacotes' || Date.now() - stockAt.current < 30000) return;
+    stockAt.current = Date.now();
     api('/packs')
       .then((packs) => setStock(packs.stock.length))
       .catch(() => {});
   }, [location.pathname]);
+
+  const [visited, setVisited] = useState<string[]>(() => (index >= 0 ? [location.pathname] : []));
+  const wanted = [...(index >= 0 ? [location.pathname] : []), ...(armed || dragging ? [prev, next] : [])].filter((p): p is string => !!p);
+  const missing = wanted.filter((p) => !visited.includes(p));
+  if (missing.length) setVisited([...visited, ...missing]);
 
   const reset = () => {
     if (track.current) {
@@ -69,7 +122,7 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
     setDragging(false);
     setArmed(false);
   };
-  useEffect(reset, [location.pathname]);
+  useLayoutEffect(reset, [location.pathname]);
 
   const onDown = (event: ReactPointerEvent) => {
     if (index < 0 || busy.current || event.pointerType === 'mouse') return;
@@ -127,15 +180,25 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
       <div className="shell">
         <main className="shell-main" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onEnd} onPointerCancel={onEnd}>
           <div className={`pager${dragging ? ' moving' : ''}`} ref={track}>
-            {(dragging || armed) && prev ? <div className="pane pane-prev" aria-hidden="true">{panes[prev]}</div> : null}
-            <div className={`pane${entry.current.cls}`} key={location.pathname}>
-              <Outlet />
-            </div>
-            {(dragging || armed) && next ? <div className="pane pane-next" aria-hidden="true">{panes[next]}</div> : null}
+            {TAB_ORDER.filter((path) => visited.includes(path)).map((path) => {
+              const position = TAB_ORDER.indexOf(path);
+              const active = position === index;
+              const adjacent = index >= 0 && (dragging || armed) && Math.abs(position - index) === 1;
+              return (
+                <TabPane key={path} path={path} offset={index < 0 ? position + 1 : position - index} visible={active || adjacent} active={active} cls={entry.current.cls}>
+                  {panes[path]}
+                </TabPane>
+              );
+            })}
+            {index < 0 ? (
+              <div className="pane">
+                <Outlet />
+              </div>
+            ) : null}
           </div>
         </main>
         <nav className="tabs" aria-label="Principal">
-          <Tab to="/" icon="album" label="Álbum" />
+          <Tab to={albumLink.current} icon="album" label="Álbum" />
           <Tab to="/pacotes" icon="pack" label="Pacotes" badge={stock} />
           <Tab to="/trocar" icon="trade" label="Trocar" />
           <Tab to="/conta" icon="me" label="Conta" />

@@ -77,14 +77,14 @@ createRoot(document.getElementById('root')!).render(
               </RequireAuth>
             }
           >
-            <Route path="/" element={<AlbumPage />} />
+            <Route path="/" />
             <Route path="/albuns" element={<Navigate to="/conta" replace />} />
             <Route path="/albuns/:id" element={<AlbumByIdPage />} />
-            <Route path="/pacotes" element={<PacksPage />} />
+            <Route path="/pacotes" />
             <Route path="/r/:codigo" element={<RedeemLinkPage />} />
-            <Route path="/trocar" element={<TradeHome />} />
+            <Route path="/trocar" />
             <Route path="/trocar/:token" element={<TradeSession />} />
-            <Route path="/conta" element={<AccountPage />} />
+            <Route path="/conta" />
           </Route>
           <Route path="*" element={<LoginPage />} />
         </Routes>

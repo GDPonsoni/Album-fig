@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { api, post, type AlbumIndex, type Card, type PageDetail, type PageMeta, type Slot } from '../api';
 import { useAuth } from '../auth';
 import { MosaicPage, StickerPage } from '../components/AlbumPages';
+import { useOnActivate } from '../components/Layout';
 import { StickerSheet } from '../components/StickerSheet';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
 import { lowFx, buzz } from '../fx';
@@ -301,6 +302,11 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
       // Sem rede: o estado otimista fica até a próxima reconciliação.
     }
   }, [base]);
+
+  // Ao voltar para a aba, renova a bandeja (pacotes abertos e trocas mudam o que há para colar).
+  useOnActivate(() => {
+    reconcile();
+  });
 
   const track = useCallback(
     (request: Promise<unknown>, ids: number[]) => {

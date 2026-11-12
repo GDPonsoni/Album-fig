@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type AlbumStats, type AlbumSummary, type MyAlbums } from '../api';
+import { useOnActivate } from '../components/Layout';
 import { Message } from '../components/ui';
 
 const day = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -72,6 +73,9 @@ export function MyAlbumsSection() {
   useEffect(() => {
     load();
   }, []);
+  useOnActivate(() => {
+    load().catch(() => {});
+  });
   const left = useTimeLeft(data?.active?.ends_at, data?.server_now, load);
 
   return (

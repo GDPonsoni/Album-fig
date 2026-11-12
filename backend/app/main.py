@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -58,6 +59,10 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="UniAlbum", lifespan=lifespan, docs_url=None if settings.is_prod else "/api/docs",
               openapi_url=None if settings.is_prod else "/api/openapi.json", redoc_url=None)
+
+
+# JSON e JS/CSS viajam comprimidos; imagens (WebP) já são pequenas e ficam de fora pelo tipo.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")
@@ -149,5 +154,7 @@ if settings.frontend_dist.exists():
             return JSONResponse({"detail": "Não encontrado."}, status_code=404)
         candidate = (dist / path).resolve()
         if path and candidate.is_relative_to(dist) and candidate.is_file():
-            return FileResponse(candidate)
+            # Arquivos de /assets têm hash no nome: nunca mudam, o navegador guarda para sempre.
+            immutable = path.startswith("assets/")
+            return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"} if immutable else None)
         return FileResponse(dist / "index.html")

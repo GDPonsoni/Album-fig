@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { useShell } from '../components/Layout';
+import { useOnActivate, useShell } from '../components/Layout';
 import { StickerSheet } from '../components/StickerSheet';
 import { api, post, type AlbumInfo, type Card, type GrantView } from '../api';
 import { useAuth } from '../auth';
@@ -415,6 +415,10 @@ export function PacksPage() {
   const reload = useCallback(() => {
     load().catch(() => {});
   }, [load]);
+  useOnActivate(() => {
+    reload();
+    api<Opening[]>(`/packs/history?limit=${HISTORY_LIMIT}`).then(setHistory).catch(() => {});
+  });
   const left = useCountdown(data, reload);
 
   const remaining = data?.stock.filter((g) => g.id !== opening?.id) ?? [];

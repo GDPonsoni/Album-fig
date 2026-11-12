@@ -42,11 +42,8 @@ button:disabled { cursor: default; }
 .pager { position: absolute; inset: 0; }
 .pager.moving { will-change: transform; }
 .pane { position: absolute; inset: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
-.pane-prev { left: -100%; right: 100%; }
-.pane-next { left: 100%; right: -100%; }
-.pane-prev, .pane-next { pointer-events: none; }
-.enter-next { animation: enter-next 0.26s cubic-bezier(.2,.8,.3,1) both; }
-.enter-prev { animation: enter-prev 0.26s cubic-bezier(.2,.8,.3,1) both; }
+.enter-next { animation: enter-next 0.26s cubic-bezier(.2,.8,.3,1) backwards; }
+.enter-prev { animation: enter-prev 0.26s cubic-bezier(.2,.8,.3,1) backwards; }
 @keyframes enter-next { from { transform: translateX(28%); opacity: 0; } }
 @keyframes enter-prev { from { transform: translateX(-28%); opacity: 0; } }
 .tab svg { transition: transform 0.2s cubic-bezier(.3,1.6,.5,1); }
