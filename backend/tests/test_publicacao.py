@@ -702,6 +702,107 @@ def test_album_em_andamento_aceita_figurinha_nova_no_proximo_numero(db, album, c
     assert response.status_code == 409 and "congelada" in response.json()["detail"]
 
 
+def test_versao_do_album_muda_quando_a_revisao_e_publicada(db, album, chapter, content, editor, admin, make_user, login):
+    _, client = editor
+    _, admin_client = admin
+    player = login(make_user("Joga"))
+    before = player.get("/api/album/version").json()["version"]
+    assert player.get("/api/album/version").json()["version"] == before  # estável sem mudança
+    draft = draft_of(client, chapter)["content"]
+    draft["stickers"][0]["name"] = "Mudou ao vivo"
+    revision_id = submit_and_approve(client, admin_client, chapter, draft)
+    assert player.get("/api/album/version").json()["version"] == before  # aprovada ainda não vale
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    after = player.get("/api/album/version").json()["version"]
+    assert after != before
+    # O jogador vê a mudança na hora, sem reiniciar nada: é só pedir de novo.
+    sticker = db.scalar(select(Sticker).where(Sticker.name == "Mudou ao vivo"))
+    assert sticker is not None
+
+
+def test_mosaico_guarda_origem_e_enquadramento_sem_levar_para_producao(db, album, chapter, editor, admin):
+    _, client = editor
+    _, admin_client = admin
+    set_period(db, album, 10, 100)
+    draft = draft_of(client, chapter)["content"]
+    poster = upload(client, chapter, kind="mosaic", data=png((10, 90, 160), (300, 400))).json()
+    source = upload(client, chapter, kind="mosaic_source", data=png((10, 90, 160), (900, 1200))).json()
+    crop = {"zoom": 1.4, "x": 0.1, "y": -0.05, "turns": 1, "flip": True, "fit": "whole"}
+    draft["mosaic"] = {"asset_id": poster["id"], "cols": 1, "rows": 1, "source_asset_id": source["id"], "crop": crop}
+    assert save(client, chapter, draft).status_code == 200
+    bad = copy.deepcopy(draft)
+    bad["mosaic"]["crop"]["turns"] = 4
+    assert save(client, chapter, bad).status_code == 422
+    revision_id = submit_and_approve(client, admin_client, chapter, draft)
+    detail = admin_client.get(f"/api/admin/revisions/{revision_id}").json()
+    assert detail["diff"]["mosaic"]["new"] == {"asset_id": poster["id"], "cols": 1, "rows": 1, "image_url": poster["url"]}
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    # A origem continua privada; só a imagem do mosaico foi publicada.
+    db.expire_all()
+    assert db.get(Asset, source["id"]).status == "pending" and db.get(Asset, poster["id"]).status == "approved"
+    # Reabrir o rascunho devolve o enquadramento para o editor ajustar de novo.
+    saved = save(client, chapter, draft).json()["content"]
+    assert saved["mosaic"]["crop"] == crop
+
+
+def test_pecas_do_mosaico_tem_texto_proprio_mesmo_com_album_em_andamento(db, album, chapter, editor, admin, make_user, login, give):
+    _, client = editor
+    _, admin_client = admin
+    set_period(db, album, 10, 100)
+    draft = draft_of(client, chapter)["content"]
+    poster = upload(client, chapter, kind="mosaic", data=png((10, 90, 160), (600, 800))).json()
+    draft["mosaic"] = {"asset_id": poster["id"], "cols": 2, "rows": 2}
+    first = submit_and_approve(client, admin_client, chapter, draft)
+    assert admin_client.post(f"/api/admin/revisions/{first}/publish", json={}).status_code == 200
+    set_period(db, album, -1, 100)  # começou: a estrutura do mosaico está congelada
+    published = draft_of(client, chapter)["content"]
+    assert [p["index"] for p in published["mosaic"]["pieces"]] == [0, 1, 2, 3]
+    assert published["mosaic"]["pieces"][0]["name"].endswith("peça 1 de 4")
+
+    edited = copy.deepcopy(published)
+    edited["mosaic"]["pieces"][1].update(name="Quadro da diretoria", back_text="Quem somos", hint="Canto direito",
+                                         back_links=[{"label": "Site", "url": "https://example.com"}])
+    bad = copy.deepcopy(edited)
+    bad["mosaic"]["pieces"].append({"index": 7, "name": "Fora da grade"})
+    assert save(client, chapter, bad).status_code == 422
+    revision_id = submit_and_approve(client, admin_client, chapter, edited)
+    diff = admin_client.get(f"/api/admin/revisions/{revision_id}").json()["diff"]
+    assert diff["mosaic"] is None and [(c["index"], sorted(c["fields"])) for c in diff["mosaic_pieces"]] == [(1, ["back_links", "back_text", "hint", "name"])]
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    db.expire_all()
+    piece = db.scalar(select(Sticker).where(Sticker.is_mosaic_piece.is_(True), Sticker.mosaic_index == 1))
+    assert (piece.name, piece.back_text, piece.hint, piece.back_links) == ("Quadro da diretoria", "Quem somos", "Canto direito", [{"label": "Site", "url": "https://example.com"}])
+    # O jogador que colou a peça lê o verso como o de qualquer figurinha.
+    player = make_user("Colou")
+    give(player, piece, 1, pasted=True)
+    back = login(player).get(f"/api/stickers/{piece.id}/back").json()
+    assert back["back_text"] == "Quem somos" and back["back_links"][0]["label"] == "Site"
+    # Desfazer devolve os textos de antes.
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/rollback").status_code == 200
+    db.expire_all()
+    assert db.get(Sticker, piece.id).name.endswith("peça 2 de 4")
+
+
+def test_figurinha_gira_na_pagina_mesmo_com_album_em_andamento(db, album, chapter, content, editor, admin):
+    _, client = editor
+    _, admin_client = admin
+    base = draft_of(client, chapter)["content"]
+    # Sem mudar nada, a diferença com o publicado é vazia (o rot padrão 0 não conta como mudança).
+    assert save(client, chapter, base).status_code == 200
+    draft = copy.deepcopy(base)
+    draft["stickers"][0]["slot"]["rot"] = -12.5
+    bad = copy.deepcopy(base)
+    bad["stickers"][0]["slot"]["rot"] = 200
+    assert save(client, chapter, bad).status_code == 422
+    revision_id = submit_and_approve(client, admin_client, chapter, draft)
+    diff = admin_client.get(f"/api/admin/revisions/{revision_id}").json()["diff"]
+    assert [c["name"] for c in diff["changed"]] == [draft["stickers"][0]["name"]] and diff["changed"][0]["fields"].keys() == {"slot"}
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    db.expire_all()
+    assert db.get(Sticker, content[0].id).slot_layout["rot"] == -12.5
+    assert client.get(f"/api/editor/chapters/{chapter.id}/draft").json()["published"]["stickers"][0]["slot"]["rot"] == -12.5
+
+
 def test_editor_retira_o_envio_e_edita_de_novo(db, chapter, editor, admin):
     _, client = editor
     _, admin_client = admin
@@ -921,7 +1022,8 @@ def test_mosaico_pela_publicacao(db, album, chapter, editor, admin):
     # Com o álbum em andamento: trocar a imagem (mesma grade) é cosmético; mudar a grade ou remover não.
     set_period(db, album, -1, 100)
     draft = draft_of(client, chapter)["content"]
-    assert draft["mosaic"] == {"asset_id": poster["id"], "cols": 2, "rows": 3}
+    assert {k: draft["mosaic"][k] for k in ("asset_id", "cols", "rows")} == {"asset_id": poster["id"], "cols": 2, "rows": 3}
+    assert len(draft["mosaic"]["pieces"]) == 6
     other = upload(client, chapter, kind="mosaic", data=png((200, 200, 0), (400, 600))).json()
     assert save(client, chapter, {**draft, "mosaic": {"asset_id": other["id"], "cols": 3, "rows": 3}}).status_code == 409
     assert save(client, chapter, {**draft, "mosaic": None}).status_code == 409

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, verified_user
 from app.db import get_db
-from app.models import PackGrant, User
+from app.models import AlbumChapter, ChapterRevision, PackGrant, Sticker, User
 from app.services import album, albums, codes, packs
 from app.services.core import cfg, now
 from app.settings import settings
@@ -25,6 +26,22 @@ def get_album(user: User = Depends(current_user), db: Session = Depends(get_db))
 @router.get("/album/orgs/{org_id}/pages/{page_no}")
 def get_page(org_id: int, page_no: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     return album.page_detail(db, user, albums.current_album(db, user), org_id, page_no)
+
+
+@router.get("/album/version")
+def album_version(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Muda quando o conteúdo do álbum em andamento muda (publicação, rollback, figurinha criada).
+    O app consulta de tempos em tempos e recarrega a tela só quando o valor muda."""
+    current = albums.current_album(db, user)
+    if current is None:
+        return {"version": ""}
+    last = db.scalar(
+        select(func.max(ChapterRevision.published_at))
+        .join(AlbumChapter, AlbumChapter.id == ChapterRevision.chapter_id)
+        .where(AlbumChapter.album_id == current.id)
+    )
+    count = db.scalar(select(func.count()).select_from(Sticker).where(Sticker.album_id == current.id)) or 0
+    return {"version": f"{last.isoformat() if last else ''}|{count}"}
 
 
 # ---- Meus álbuns: o em andamento e os encerrados de que o usuário participou (só leitura)

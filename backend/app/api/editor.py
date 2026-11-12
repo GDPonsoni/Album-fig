@@ -20,7 +20,7 @@ router = APIRouter(prefix="/editor", tags=["editor"])
 MAX_ASSETS = 100
 MAX_TOTAL_BYTES = 12 * 1024 * 1024  # por capítulo; cada imagem já sai do servidor com no máximo 150 KB
 MAX_UPLOAD = 8 * 1024 * 1024
-KINDS = {"sticker": 640, "background": 1200, "mosaic": 1200, "logo": 240}  # lado maior, em pixels
+KINDS = {"sticker": 640, "background": 1200, "mosaic": 1200, "mosaic_source": 1600, "logo": 240}  # lado maior, em pixels
 
 
 class DraftIn(BaseModel):

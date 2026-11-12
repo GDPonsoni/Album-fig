@@ -303,6 +303,55 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
     }
   }, [base]);
 
+  // Conteúdo publicado enquanto o app está aberto (posições, textos, imagens, figurinhas novas):
+  // consulta uma versão barata de tempos em tempos e, quando muda, recarrega índice e páginas já abertas.
+  const contentVersion = useRef<string | null>(null);
+  useEffect(() => {
+    if (albumId) return; // álbum encerrado não muda
+    let alive = true;
+    const check = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const { version } = await api<{ version: string }>('/album/version');
+        if (!alive) return;
+        const known = contentVersion.current;
+        contentVersion.current = version;
+        if (known === null || known === version) return;
+        if (pendingPosts.current > 0 || animBusy.current) {
+          contentVersion.current = known; // tenta de novo no próximo ciclo
+          return;
+        }
+        const keys = Object.keys(detailsRef.current).map((key) => [key, ...key.split(':')] as const);
+        const [fresh, ...pagesData] = await Promise.all([
+          api<AlbumIndex>(base),
+          ...keys.map(([, orgId, pageNo]) => api<PageDetail>(`${base}/orgs/${orgId}/pages/${pageNo}`).catch(() => null)),
+        ]);
+        if (!alive || pendingPosts.current > 0 || animBusy.current) {
+          contentVersion.current = known;
+          return;
+        }
+        setIndex(fresh);
+        setDetails((all) => {
+          const next = { ...all };
+          keys.forEach(([key], i) => {
+            if (pagesData[i]) next[key] = pagesData[i]!;
+          });
+          return next;
+        });
+      } catch {
+        // Sem rede: tenta no próximo ciclo.
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 15000);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [albumId, base]);
+
   // Ao voltar para a aba, renova a bandeja (pacotes abertos e trocas mudam o que há para colar).
   useOnActivate(() => {
     reconcile();

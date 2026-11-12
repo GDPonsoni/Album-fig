@@ -50,7 +50,7 @@ export function StickerPage({ detail, onOpen, lastPasted, overlay }: { detail: P
           data-slot={slot.sticker_id}
           disabled={!slot.filled}
           aria-label={slot.filled ? `Ver verso de ${slot.card!.name}` : `Espaço vazio ${slot.number}`}
-          style={{ left: `${slot.layout.x}%`, top: `${slot.layout.y}%`, width: `${slot.layout.w}%`, height: `${slot.layout.h}%` }}
+          style={{ left: `${slot.layout.x}%`, top: `${slot.layout.y}%`, width: `${slot.layout.w}%`, height: `${slot.layout.h}%`, ...(slot.layout.rot ? { transform: `rotate(${slot.layout.rot}deg)` } : null) }}
           onClick={() => onOpen(slot)}
         >
           {slot.filled ? <StickerArt card={slot.card!} /> : <EmptySlot slot={slot} />}
@@ -71,7 +71,7 @@ function mosaicWidth(cols: number, rows: number, landscape: boolean): number {
   return Math.round(naturalW * Math.min(1, 92 / naturalW, (pageH * 0.8) / naturalH) * 10) / 10;
 }
 
-export function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail; onOpen: (slot: Slot) => void; lastPasted: number | null }) {
+export function MosaicPage({ detail, onOpen, lastPasted, lines, selected }: { detail: PageDetail; onOpen: (slot: Slot) => void; lastPasted: number | null; lines?: boolean; selected?: number | null }) {
   const { org } = detail;
   const filled = detail.slots.filter((s) => s.filled).length;
   return (
@@ -83,7 +83,7 @@ export function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail;
         </div>
       </header>
       <div
-        className="mosaic"
+        className={`mosaic${lines ? ' lines' : ''}`}
         style={{
           gridTemplateColumns: `repeat(${org.mosaic_cols}, 1fr)`, gridTemplateRows: `repeat(${org.mosaic_rows}, 1fr)`,
           aspectRatio: `${3 * org.mosaic_cols} / ${4 * org.mosaic_rows}`, width: `${mosaicWidth(org.mosaic_cols, org.mosaic_rows, detail.orientation === 'landscape')}%`,
@@ -102,7 +102,7 @@ export function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail;
               data-slot={slot.sticker_id}
               disabled={!slot.filled}
               aria-label={slot.filled ? `Peça ${index + 1} colada` : `Peça ${index + 1}, espaço ${slot.number}`}
-              className={`mosaic-piece${slot.filled ? ' filled' : ''}${lastPasted === slot.sticker_id ? ' just-pasted' : ''}`}
+              className={`mosaic-piece${slot.mosaic_index === selected ? ' sel' : ''}${slot.filled ? ' filled' : ''}${lastPasted === slot.sticker_id ? ' just-pasted' : ''}`}
               style={
                 slot.filled && !(slot.card?.image_url && slot.sticker_id > 0)
                   ? { backgroundImage: `url(${org.mosaic_image_url})`, backgroundSize: `${org.mosaic_cols * 100}% ${org.mosaic_rows * 100}%`, backgroundPosition: `${x}% ${y}%` }
