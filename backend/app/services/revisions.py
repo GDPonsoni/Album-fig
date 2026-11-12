@@ -86,6 +86,7 @@ class SlotC(Strict):
     y: float = Field(ge=0, le=100)
     w: float = Field(gt=0, le=100)
     h: float = Field(gt=0, le=100)
+    rot: float = Field(default=0, ge=-180, le=180)  # graus; só muda como a figurinha é desenhada na página
 
     @model_validator(mode="after")
     def _inside(self) -> "SlotC":
@@ -111,10 +112,43 @@ class PageC(Strict):
     layout: str = Field(default="free", pattern=r"^(free|grid-[1-5]x[1-6])$")
 
 
+class CropC(Strict):
+    """Enquadramento da imagem do mosaico, guardado para o editor poder ajustar de novo sem reenviar."""
+
+    zoom: float = Field(ge=0.5, le=4)
+    x: float = Field(ge=-2, le=2)
+    y: float = Field(ge=-2, le=2)
+    turns: int = Field(ge=0, le=3)
+    flip: bool = False
+    fit: Literal["fill", "whole"] = "fill"
+
+
+class PieceC(Strict):
+    """Texto de uma peça do mosaico (a peça é uma figurinha como as outras: nome, dica, verso e links)."""
+
+    index: int = Field(ge=0, le=99)
+    name: Name = Field(max_length=120)
+    hint: Line = Field(default="", max_length=160)
+    back_text: Text = Field(default="", max_length=2000)
+    back_links: list[BackLinkC] = Field(default_factory=list, max_length=5)
+
+
 class MosaicC(Strict):
     asset_id: int | None = None
     cols: int = Field(ge=1, le=10)
     rows: int = Field(ge=1, le=10)
+    # Peça que não aparece aqui fica como está em produção.
+    pieces: list[PieceC] = Field(default_factory=list, max_length=100)
+    # Imagem original (privada, só do editor) e o enquadramento que gerou `asset_id`. Não vão para produção.
+    source_asset_id: int | None = None
+    crop: CropC | None = None
+
+    @model_validator(mode="after")
+    def _pieces_fit(self) -> "MosaicC":
+        indexes = [piece.index for piece in self.pieces]
+        if len(set(indexes)) != len(indexes) or any(i >= self.cols * self.rows for i in indexes):
+            raise ValueError("Há peça repetida ou fora da grade do mosaico.")
+        return self
 
 
 class StickerC(Strict):
@@ -197,6 +231,7 @@ def check_references(db: Session, chapter: AlbumChapter, content: Content) -> No
     wanted = {s.asset_id for s in content.stickers} | {p.background_asset_id for p in content.pages}
     if content.mosaic is not None:
         wanted.add(content.mosaic.asset_id)
+        wanted.add(content.mosaic.source_asset_id)
     if content.org is not None:
         wanted.add(content.org.logo_asset_id)
     if any(asset_id not in assets for asset_id in wanted - {None}):
@@ -243,6 +278,13 @@ def production_content(db: Session, chapter: AlbumChapter) -> dict:
             "asset_id": _asset_for(db, chapter, chapter.mosaic_image_url, "mosaic"),
             "cols": chapter.mosaic_cols,
             "rows": chapter.mosaic_rows,
+            "pieces": [
+                {
+                    "index": p.mosaic_index, "name": p.name, "hint": p.hint, "back_text": p.back_text,
+                    "back_links": list(p.back_links or []),
+                }
+                for p in sorted(pieces, key=lambda p: p.mosaic_index or 0)
+            ],
         }
     org = chapter.org
     return {
@@ -265,7 +307,7 @@ def production_content(db: Session, chapter: AlbumChapter) -> dict:
                     "back_text": s.back_text,
                     "back_links": list(s.back_links or []),
                     "page_no": s.page_no,
-                    "slot": s.slot_layout or {"x": 5, "y": 15, "w": 28, "h": 27},
+                    "slot": {"rot": 0, **(s.slot_layout or {"x": 5, "y": 15, "w": 28, "h": 27})},
                     "suggested_rarity_id": s.rarity_id,
                     "active": s.active,
                 }
@@ -422,7 +464,25 @@ def apply_content(
     # As imagens que saíram de produção ficam guardadas: o rollback precisa delas.
 
 
+def _apply_pieces(db: Session, chapter: AlbumChapter, content: Content) -> None:
+    """Nome, dica, verso e links das peças. Só texto: vale também com o álbum em andamento."""
+    if content.mosaic is None or not content.mosaic.pieces:
+        return
+    rows = {p.mosaic_index: p for p in _production_stickers(db, chapter, mosaic=True)}
+    for item in content.mosaic.pieces:
+        row = rows.get(item.index)
+        if row is not None:
+            row.name, row.hint, row.back_text = item.name, item.hint, item.back_text
+            row.back_links = [link.model_dump() for link in item.back_links]
+    db.flush()
+
+
 def _apply_mosaic(db: Session, chapter: AlbumChapter, content: Content, url, rarity_id: int) -> None:
+    _apply_mosaic_image(db, chapter, content, url, rarity_id)
+    _apply_pieces(db, chapter, content)
+
+
+def _apply_mosaic_image(db: Session, chapter: AlbumChapter, content: Content, url, rarity_id: int) -> None:
     pieces = _production_stickers(db, chapter, mosaic=True)
     target = url(content.mosaic.asset_id) if content.mosaic is not None else None
     if target is None:
@@ -650,7 +710,23 @@ def diff(db: Session, chapter: AlbumChapter, proposed: dict) -> dict:
                 "old": url((before or {}).get("background_asset_id")), "new": url((after or {}).get("background_asset_id")),
             }
         pages.append(entry)
-    old_mosaic, new_mosaic = current.get("mosaic"), proposed.get("mosaic")
+    old_mosaic = current.get("mosaic")
+    new_mosaic = proposed.get("mosaic")
+    piece_changes = []
+    if new_mosaic:  # origem e enquadramento são do editor: só imagem, grade e textos das peças mudam o que vai ao ar
+        before = {p["index"]: p for p in (old_mosaic or {}).get("pieces", [])}
+        for piece in new_mosaic.get("pieces", []):
+            old_piece = before.get(piece["index"])
+            fields = {
+                f: {"old": (old_piece or {}).get(f), "new": piece.get(f)}
+                for f in ("name", "hint", "back_text", "back_links")
+                if old_piece is not None and (old_piece.get(f) or ([] if f == "back_links" else "")) != (piece.get(f) or ([] if f == "back_links" else ""))
+            }
+            if fields:
+                piece_changes.append({"index": piece["index"], "fields": fields})
+        new_mosaic = {k: new_mosaic.get(k) for k in ("asset_id", "cols", "rows")}
+    if old_mosaic:
+        old_mosaic = {k: old_mosaic.get(k) for k in ("asset_id", "cols", "rows")}
     mosaic = None
     if old_mosaic != new_mosaic:
         mosaic = {
@@ -677,5 +753,6 @@ def diff(db: Session, chapter: AlbumChapter, proposed: dict) -> dict:
         "changed": sorted(changed, key=lambda item: item["name"]),
         "pages": pages,
         "mosaic": mosaic,
+        "mosaic_pieces": sorted(piece_changes, key=lambda item: item["index"]),
         "orientation": orientation,
     }

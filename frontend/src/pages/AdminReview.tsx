@@ -45,7 +45,7 @@ function Change({ label, change }: { label: string; change: { old: any; new: any
 }
 
 function Diff({ diff }: { diff: Row }) {
-  const empty = !diff.added.length && !diff.removed.length && !diff.changed.length && !diff.pages.length && !diff.mosaic && !diff.orientation && !diff.org;
+  const empty = !diff.added.length && !diff.removed.length && !diff.changed.length && !diff.pages.length && !diff.mosaic && !diff.mosaic_pieces?.length && !diff.orientation && !diff.org;
   if (empty) return <p className="muted">Nenhuma diferença em relação ao que está publicado.</p>;
   return (
     <div className="diff">
@@ -86,6 +86,17 @@ function Diff({ diff }: { diff: Row }) {
             <details key={page.page_no} open>
               <summary>Página {page.page_no} {page.kind === 'added' ? '(nova)' : page.kind === 'removed' ? '(removida)' : ''}</summary>
               <ul>{Object.entries(page.fields).map(([field, change]) => <Change key={field} label={field} change={change as any} />)}</ul>
+            </details>
+          ))}
+        </div>
+      ) : null}
+      {diff.mosaic_pieces?.length ? (
+        <div>
+          <h4>Peças do mosaico ({diff.mosaic_pieces.length})</h4>
+          {diff.mosaic_pieces.map((piece: Row) => (
+            <details key={piece.index} open={diff.mosaic_pieces.length <= 4}>
+              <summary>Peça {piece.index + 1} · {Object.keys(piece.fields).map((f) => FIELD[f] ?? f).join(', ')}</summary>
+              <ul>{Object.entries(piece.fields).map(([field, change]) => <Change key={field} label={field} change={change as any} />)}</ul>
             </details>
           ))}
         </div>
@@ -157,17 +168,45 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
     });
   const publishBody = { stickers: Object.fromEntries(Object.entries(overrides).filter(([, value]) => Object.keys(value).length)) };
 
+  const diff = data.diff as Row;
+  const counts: [string, number][] = [
+    ['figurinhas novas', diff.added.length],
+    ['alteradas', diff.changed.length],
+    ['removidas', diff.removed.length],
+    ['páginas', diff.pages.length],
+    ['mosaico', diff.mosaic ? 1 : 0],
+    ['peças do mosaico', diff.mosaic_pieces?.length ?? 0],
+    ['identidade da org', diff.org ? 1 : 0],
+  ];
+  const steps = [['submitted', 'Enviada'], ['approved', 'Aprovada'], ['published', 'Publicada']] as const;
+  const stepIndex = Math.max(0, data.status === 'rejected' ? 0 : data.status === 'superseded' ? 2 : steps.findIndex(([value]) => value === data.status));
+  const nextStep: Record<string, string> = {
+    submitted: 'Confira o que muda e a prévia abaixo. "Aprovar e publicar" já coloca no ar; "Só aprovar" deixa para publicar depois. Rejeitar exige uma nota para o editor.',
+    approved: 'Aprovada, mas ainda não está no ar. Publique para valer para os jogadores (se há figurinhas novas, defina raridade e número antes).',
+    rejected: 'Devolvida ao editor com a sua nota. Nada a fazer até ele corrigir e enviar de novo.',
+    published: 'Já está no ar. Se algo deu errado, use "Desfazer publicação" para voltar ao conteúdo anterior.',
+    superseded: 'Substituída por uma revisão mais nova.',
+    draft: 'O editor ainda está escrevendo.',
+  };
+  const people = (data.contributors as string[] | undefined)?.length ? (data.contributors as string[]).join(', ') : data.author ?? '—';
+
   return (
     <section className="review-detail">
       {prompt}
       <div className="admin-head">
-        <h2>{data.org_name} · revisão {data.number} <em className={`rev-status rev-${data.status}`}>{STATUS[data.status]}</em></h2>
+        <h2>{data.org_name} · revisão {data.number}</h2>
         <button className="btn" onClick={onClose}>Fechar</button>
       </div>
+      <ol className="steps" aria-label="Etapas da revisão">
+        {steps.map(([value, label], index) => (
+          <li key={value} className={`${index < stepIndex || (index === stepIndex && ['published', 'superseded'].includes(data.status)) ? 'done' : index === stepIndex ? 'now' : ''}${data.status === 'rejected' && index === 0 ? ' bad' : ''}`}>{data.status === 'rejected' && index === 0 ? 'Devolvida' : label}</li>
+        ))}
+      </ol>
       <p className="muted">
-        Álbum {data.album.title} ({ALBUM[data.album_status]}) · autor: {data.author ?? '—'} · enviada {when(data.submitted_at)}
+        Álbum {data.album.title} ({ALBUM[data.album_status]}) · escrita por {people} · enviada {when(data.submitted_at)}
         {data.review_note ? ` · nota: ${data.review_note}` : ''}
       </p>
+      <p className="next-step">{nextStep[data.status]}</p>
       <MfaError error={error} />
       {ok ? <Message kind="ok">{ok}</Message> : null}
       {data.structural.length ? (
@@ -176,16 +215,24 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
         </p>
       ) : null}
 
-      <h3>O que muda</h3>
-      <Diff diff={data.diff} />
+      <h3>Resumo</h3>
+      <ul className="chips">
+        {counts.filter(([, n]) => n).map(([label, n]) => <li key={label}><b>{n}</b> {label}</li>)}
+        {counts.every(([, n]) => !n) ? <li>Nenhuma mudança</li> : null}
+      </ul>
 
-      <h3>Prévia</h3>
+      <h3>Antes e depois</h3>
       <div className="preview-pair">
         <ContentPreview label="Publicado hoje" content={published} org={org} assets={assets} rarities={rarities} numbers={numbers} />
         <ContentPreview label="Proposto" content={content} org={org} assets={assets} rarities={rarities} numbers={numbers} />
       </div>
 
-      {data.status === 'approved' && added.length && !frozen ? (
+      <details className="fold" open={counts.reduce((sum, [, n]) => sum + n, 0) <= 8}>
+        <summary>Cada mudança em detalhe</summary>
+        <Diff diff={diff} />
+      </details>
+
+      {['submitted', 'approved'].includes(data.status) && added.length && !frozen ? (
         <>
           <h3>Raridade e número das figurinhas novas</h3>
           <p className="muted">Em branco: raridade sugerida pelo editor (ou a mais comum) e o próximo número livre do álbum.</p>
@@ -209,45 +256,51 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
         </>
       ) : null}
 
-      <div className="review-actions">
-        {data.status === 'submitted' ? (
-          <>
-            <label className="field"><span>Nota para o editor (obrigatória ao rejeitar)</span>
-              <textarea rows={2} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} />
-            </label>
-            <div className="admin-actions">
-              <button className="btn btn-primary" onClick={() => act(() => post(`/admin/revisions/${id}/approve`, { note }), 'Revisão aprovada. Agora pode ser publicada.')}>Aprovar</button>
-              <button className="btn" onClick={() => act(() => post(`/admin/revisions/${id}/reject`, { note }), 'Revisão rejeitada; voltou para o editor.')}>Rejeitar</button>
-            </div>
-          </>
+      <details className="fold">
+        <summary>Histórico e auditoria do capítulo</summary>
+        <ul className="admin-list">
+          {history.map((row) => (
+            <li key={row.id}>
+              <span>Revisão {row.number} · {STATUS[row.status]}{row.is_live ? ' · no ar' : ''}</span>
+              <small>{(row.contributors?.length ? row.contributors.join(', ') : row.author) ?? '—'} · {when(row.published_at ?? row.submitted_at ?? row.updated_at)}</small>
+            </li>
+          ))}
+        </ul>
+        {admin ? (
+          <ul className="admin-list">
+            {trail.slice(0, 30).map((row) => (
+              <li key={row.id}><span>{ACTION[row.action] ?? row.action}</span><small>{row.by ?? 'sistema'} · {when(row.at)}</small></li>
+            ))}
+          </ul>
         ) : null}
-        {data.status === 'approved' ? (
-          <div className="admin-actions">
-            <button className="btn btn-primary" onClick={() => window.confirm('Publicar esta revisão? O conteúdo passa a valer para os jogadores.') && act(() => post(`/admin/revisions/${id}/publish`, publishBody), 'Publicada.')}>Publicar</button>
-          </div>
-        ) : null}
-        {data.can_rollback ? (
-          <div className="admin-actions">
-            <button className="btn" onClick={() => window.confirm('Desfazer esta publicação e voltar ao conteúdo anterior?') && act(() => post(`/admin/revisions/${id}/rollback`), 'Publicação desfeita: o conteúdo anterior voltou.')}>Rollback</button>
-          </div>
-        ) : null}
-      </div>
+      </details>
 
-      <h3>Histórico do capítulo</h3>
-      <ul className="admin-list">
-        {history.map((row) => (
-          <li key={row.id}>
-            <span>Revisão {row.number} · {STATUS[row.status]}{row.is_live ? ' · no ar' : ''}</span>
-            <small>{row.author ?? '—'} · {when(row.published_at ?? row.submitted_at ?? row.updated_at)}</small>
-          </li>
-        ))}
-      </ul>
-      <h3>Auditoria do capítulo</h3>
-      <ul className="admin-list">
-        {trail.slice(0, 30).map((row) => (
-          <li key={row.id}><span>{ACTION[row.action] ?? row.action}</span><small>{row.by ?? 'sistema'} · {when(row.at)}</small></li>
-        ))}
-      </ul>
+      {['submitted', 'approved'].includes(data.status) || data.can_rollback ? (
+        <div className="decision-bar">
+          {data.status === 'submitted' ? (
+            <>
+              <label className="field"><span>Nota para o editor <small>(obrigatória ao rejeitar)</small></span>
+                <textarea rows={2} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} />
+              </label>
+              <div className="decision-buttons">
+                <button className="btn btn-reject" onClick={() => act(() => post(`/admin/revisions/${id}/reject`, { note }), 'Revisão rejeitada; voltou para o editor.')}>Rejeitar</button>
+                <button className="btn" onClick={() => act(() => post(`/admin/revisions/${id}/approve`, { note }), 'Revisão aprovada. Falta publicar.')}>Só aprovar</button>
+                <button className="btn btn-primary" onClick={() => window.confirm('Aprovar e publicar? O conteúdo passa a valer para os jogadores em instantes.') && act(async () => { await post(`/admin/revisions/${id}/approve`, { note }); await post(`/admin/revisions/${id}/publish`, publishBody); }, 'Aprovada e publicada: os jogadores já veem a mudança.')}>Aprovar e publicar</button>
+              </div>
+            </>
+          ) : null}
+          {data.status === 'approved' ? (
+            <div className="decision-buttons">
+              <button className="btn btn-primary" onClick={() => window.confirm('Publicar esta revisão? O conteúdo passa a valer para os jogadores.') && act(() => post(`/admin/revisions/${id}/publish`, publishBody), 'Publicada.')}>Publicar no álbum</button>
+            </div>
+          ) : null}
+          {data.can_rollback ? (
+            <div className="decision-buttons">
+              <button className="btn" onClick={() => window.confirm('Desfazer esta publicação e voltar ao conteúdo anterior?') && act(() => post(`/admin/revisions/${id}/rollback`), 'Publicação desfeita: o conteúdo anterior voltou.')}>Desfazer publicação</button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -361,6 +414,7 @@ function Promoters() {
 }
 
 const QUEUES = ['submitted', 'approved', 'rejected', 'published'] as const;
+const QUEUE_LABEL: Record<(typeof QUEUES)[number], string> = { submitted: 'Para revisar', approved: 'Para publicar', rejected: 'Devolvidas', published: 'Publicadas' };
 
 export default function AdminReviewPage() {
   const [queue, setQueue] = useState<(typeof QUEUES)[number]>('submitted');
@@ -382,12 +436,12 @@ export default function AdminReviewPage() {
   return (
     <div className="admin">
       <header className="admin-top">
-        <h1>Revisões</h1>
+        <h1>Revisão de capítulos</h1>
         {admin ? <Link to="/admin">Painel admin</Link> : <Link to="/conta">Minha conta</Link>}
       </header>
       <section>
         <nav className="admin-tabs" aria-label="Fila de revisões">
-          {QUEUES.map((name) => <button key={name} className={queue === name ? 'active' : ''} onClick={() => { setQueue(name); setOpenId(null); }}>{STATUS[name]}s</button>)}
+          {QUEUES.map((name) => <button key={name} className={queue === name ? 'active' : ''} onClick={() => { setQueue(name); setOpenId(null); }}>{QUEUE_LABEL[name]}</button>)}
         </nav>
         <Message>{error}</Message>
         <ul className="admin-list">
@@ -400,7 +454,7 @@ export default function AdminReviewPage() {
             </li>
           ))}
         </ul>
-        {rows.length ? null : <p className="muted">Nada nesta fila.</p>}
+        {rows.length ? null : <p className="muted">{queue === 'submitted' ? 'Nada esperando revisão.' : 'Nada nesta fila.'}</p>}
       </section>
       {openId ? <Detail key={openId} id={openId} admin={admin} onChanged={load} onClose={() => setOpenId(null)} /> : null}
       {admin ? <Editors rows={overview} reload={load} /> : null}

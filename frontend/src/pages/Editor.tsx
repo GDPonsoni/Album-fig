@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { api, post, type AssetView, type ChapterContent, type ContentPage, type ContentSticker, type OrgView, type RarityView } from '../api';
+import { api, post, type AssetView, type ChapterContent, type CropState, type ContentPage, type ContentSticker, type MosaicPiece, type OrgView, type RarityView } from '../api';
 import { MosaicPage, StickerPage } from '../components/AlbumPages';
 import { ImageCropper, type CropSpec } from '../components/ImageCropper';
-import { Message } from '../components/ui';
+import { Message, StickerArt } from '../components/ui';
 import { StickerSheet } from '../components/StickerSheet';
 import { contentToPages, gridSlots } from '../preview';
 
@@ -107,15 +107,16 @@ function PickButton({ label, disabled, onPick, primary }: { label: string; disab
   );
 }
 
-type Slot = { x: number; y: number; w: number; h: number };
+type Slot = { x: number; y: number; w: number; h: number; rot?: number };
 
 /** Camada por cima da página: arrastar move a figurinha, puxar o canto muda o tamanho, tocar no cabeçalho edita o texto. */
-function EditLayer({ stickers, selected, head, landscape, locked, onSelect, onSlot }: {
+function EditLayer({ stickers, selected, head, landscape, locked, arrange, onSelect, onSlot }: {
   stickers: ContentSticker[];
   selected: string | null;
   head: boolean;
   landscape: boolean;
   locked: boolean;
+  arrange: boolean; // só com o modo "mover" ligado as figurinhas arrastam; fora dele o toque só seleciona
   onSelect: (key: string | null) => void;
   onSlot: (key: string, slot: Slot, final: boolean) => void;
 }) {
@@ -126,7 +127,7 @@ function EditLayer({ stickers, selected, head, landscape, locked, onSelect, onSl
   const down = (event: ReactPointerEvent, sticker: ContentSticker, mode: 'move' | 'resize') => {
     event.stopPropagation();
     onSelect(sticker.key);
-    if (locked) return;
+    if (locked || !arrange) return;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     drag.current = { key: sticker.key, mode, x: event.clientX, y: event.clientY, slot: sticker.slot };
   };
@@ -156,7 +157,7 @@ function EditLayer({ stickers, selected, head, landscape, locked, onSelect, onSl
     (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
   };
   const key = (event: React.KeyboardEvent, sticker: ContentSticker) => {
-    if (locked) return;
+    if (locked || !arrange) return;
     const step = event.shiftKey ? 2 : 0.5;
     const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
     if (!delta) return;
@@ -166,17 +167,17 @@ function EditLayer({ stickers, selected, head, landscape, locked, onSelect, onSl
   };
 
   return (
-    <div className="edit-layer" ref={layer} onPointerDown={() => onSelect(null)}>
+    <div className={`edit-layer${arrange && !locked ? ' arrange' : ''}`} ref={layer} onPointerDown={() => onSelect(null)}>
       <button type="button" className={`edit-head${head ? ' on' : ''}`} style={{ height: `${top}%` }} aria-label="Editar título e texto da página" onPointerDown={(e) => { e.stopPropagation(); onSelect('head'); }}>
       </button>
       {stickers.filter((s) => s.active).map((sticker) => (
         <div
           key={sticker.key}
           className={`edit-box${sticker.key === selected ? ' on' : ''}`}
-          style={{ left: `${sticker.slot.x}%`, top: `${sticker.slot.y}%`, width: `${sticker.slot.w}%`, height: `${sticker.slot.h}%` }}
+          style={{ left: `${sticker.slot.x}%`, top: `${sticker.slot.y}%`, width: `${sticker.slot.w}%`, height: `${sticker.slot.h}%`, ...(sticker.slot.rot ? { transform: `rotate(${sticker.slot.rot}deg)` } : null) }}
           role="button"
           tabIndex={0}
-          aria-label={`Mover ${sticker.name}`}
+          aria-label={`${arrange ? 'Mover' : 'Selecionar'} ${sticker.name}`}
           onPointerDown={(e) => down(e, sticker, 'move')}
           onPointerMove={move}
           onPointerUp={up}
@@ -184,7 +185,7 @@ function EditLayer({ stickers, selected, head, landscape, locked, onSelect, onSl
           onKeyDown={(e) => key(e, sticker)}
           onFocus={() => onSelect(sticker.key)}
         >
-          {sticker.key === selected && !locked ? (
+          {sticker.key === selected && !locked && arrange ? (
             <i
               className="edit-handle"
               aria-label="Mudar o tamanho"
@@ -212,14 +213,21 @@ export function EditorChapter() {
   const [revision, setRevision] = useState<Row | null>(null);
   const [editable, setEditable] = useState(true);
   const [inspect, setInspect] = useState<string | null>(null);
-  const [tab, setTab] = useState<'pages' | 'mosaic' | 'general'>('pages');
+  const [arrange, setArrange] = useState(false);
+  const [mosaicLines, setMosaicLines] = useState(true);
+  const [piece, setPieceIndex] = useState<number | null>(null);
+  const [pieceSheet, setPieceSheet] = useState(false);
+  const [pieceImage, setPieceImage] = useState<string | null>(null);
+  const [depth, setDepth] = useState({ past: 0, future: 0 });
+  const history = useRef<{ past: ChapterContent[]; future: ChapterContent[]; at: number }>({ past: [], future: [], at: 0 });
+  const [tab, setTab] = useState<'pages' | 'general'>('pages');
+  const [mosaicPage, setMosaicPage] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [save, setSave] = useState<{ state: 'idle' | 'dirty' | 'saving' | 'saved' | 'error'; message?: string }>({ state: 'idle' });
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
-  const [cropping, setCropping] = useState<{ file: File; kind: 'sticker' | 'background' | 'mosaic' | 'logo'; apply: (asset: AssetView) => void } | null>(null);
-  const mosaicFile = useRef<File | null>(null);
+  const [cropping, setCropping] = useState<{ file: File; kind: 'sticker' | 'background' | 'mosaic' | 'logo'; initial?: CropState | null; newSource?: boolean; apply: (asset: AssetView, state: CropState, sourceId?: number) => void } | null>(null);
   const base = `/editor/chapters/${chapterId}`;
 
   useEffect(() => {
@@ -244,12 +252,13 @@ export function EditorChapter() {
     if (!body) return false;
     setSave({ state: 'saving' });
     // Linha de link ainda em branco (só o "https://" inicial) não impede de salvar o resto: fica de fora.
+    const blank = (link: { label: string; url: string }) => link.label.trim() === '' && ['', 'https://'].includes(link.url.trim());
     const clean: ChapterContent = {
       ...body,
-      stickers: body.stickers.map((sticker) => ({
-        ...sticker,
-        back_links: sticker.back_links.filter((link) => link.label.trim() !== '' || !['', 'https://'].includes(link.url.trim())),
-      })),
+      stickers: body.stickers.map((sticker) => ({ ...sticker, back_links: sticker.back_links.filter((link) => !blank(link)) })),
+      mosaic: body.mosaic
+        ? { ...body.mosaic, pieces: body.mosaic.pieces?.map((item) => ({ ...item, back_links: item.back_links.filter((link) => !blank(link)) })) }
+        : body.mosaic,
     };
     const request = api<{ revision: Row }>(`${base}/draft`, { method: 'PUT', body: { content: clean } }).then(
       (result) => {
@@ -289,16 +298,79 @@ export function EditorChapter() {
   }, [unsaved]);
 
   const change = useCallback((update: (current: ChapterContent) => ChapterContent) => {
+    const before = latest.current;
+    if (before) {
+      // Mudanças em sequência rápida (digitar, arrastar) viram um passo só do "Desfazer".
+      const h = history.current;
+      if (Date.now() - h.at > 700 || !h.past.length) {
+        h.past = [...h.past.slice(-79), before];
+        setDepth({ past: h.past.length, future: 0 });
+      }
+      h.at = Date.now();
+      h.future = [];
+    }
     setContent((current) => (current ? update(current) : current));
     setSave({ state: 'dirty' });
     setNote('');
   }, []);
+
+  const travel = useCallback((direction: 'past' | 'future') => {
+    const h = history.current;
+    const target = h[direction].at(-1);
+    const now = latest.current;
+    if (!target || !now) return;
+    h[direction] = h[direction].slice(0, -1);
+    const other = direction === 'past' ? 'future' : 'past';
+    h[other] = [...h[other], now];
+    h.at = 0;
+    setDepth({ past: h.past.length, future: h.future.length });
+    setContent(target);
+    setSave({ state: 'dirty' });
+    setNote('');
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return; // os campos têm o desfazer deles
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return;
+      event.preventDefault();
+      travel(event.shiftKey ? 'future' : 'past');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [travel]);
 
   const pages = useMemo(() => (content ? [...content.pages].sort((a, b) => a.page_no - b.page_no) : []), [content]);
   const details = useMemo(
     () => (content && draft ? contentToPages(content, draft.chapter.org, assets, draft.rarities) : []),
     [content, draft, assets],
   );
+
+  // Imagem da peça para a prévia: fatia da imagem do mosaico (o servidor faz o mesmo corte).
+  const mosaicNow = content?.mosaic ?? null;
+  const mosaicUrl = mosaicNow?.asset_id == null ? null : assets.find((asset) => asset.id === mosaicNow.asset_id)?.url ?? null;
+  const mosaicCols = mosaicNow?.cols ?? 0;
+  const mosaicRows = mosaicNow?.rows ?? 0;
+  useEffect(() => {
+    setPieceImage(null);
+    if (piece === null || !mosaicUrl || !mosaicCols) return;
+    let alive = true;
+    const element = new Image();
+    element.onload = () => {
+      const w = element.naturalWidth / mosaicCols;
+      const h = element.naturalHeight / mosaicRows;
+      const out = document.createElement('canvas');
+      out.width = 300;
+      out.height = 400;
+      out.getContext('2d')?.drawImage(element, (piece % mosaicCols) * w, Math.floor(piece / mosaicCols) * h, w, h, 0, 0, 300, 400);
+      if (alive) setPieceImage(out.toDataURL('image/jpeg', 0.85));
+    };
+    element.src = mosaicUrl;
+    return () => {
+      alive = false;
+    };
+  }, [piece, mosaicCols, mosaicRows, mosaicUrl]);
 
   if (error && !draft) {
     return <div className="screen"><h1 className="screen-title">Editor</h1><Message>{error}</Message><Link className="btn" to="/">Voltar ao álbum</Link></div>;
@@ -320,6 +392,8 @@ export function EditorChapter() {
 
   const setPage = (changes: Partial<ContentPage>) =>
     change((c) => ({ ...c, pages: c.pages.map((p) => (p.page_no === page.page_no ? { ...p, ...changes } : p)) }));
+  // Girar não muda posição nem tamanho: a grade da página continua valendo.
+  const setRot = (sticker: ContentSticker, rot: number) => setSticker(sticker.key, { slot: { ...sticker.slot, rot: Math.max(-180, Math.min(180, Math.round(rot))) } });
   const setSticker = (key: string, changes: Partial<ContentSticker>) =>
     change((c) => ({ ...c, stickers: c.stickers.map((s) => (s.key === key ? { ...s, ...changes } : s)) }));
   // Mexer na posição à mão tira a página de qualquer grade pronta.
@@ -352,6 +426,7 @@ export function EditorChapter() {
     setSelected('head');
   };
   const removePage = () => {
+    if (!window.confirm(`Remover a página ${page.page_no}?`)) return;
     change((c) => ({ ...c, pages: c.pages.filter((p) => p.page_no !== page.page_no) }));
     setPageIndex(Math.max(0, pageIndex - 1));
     setSelected(null);
@@ -371,11 +446,29 @@ export function EditorChapter() {
     setSelected(key);
   };
   const removeSticker = (key: string) => {
+    if (!window.confirm('Remover esta figurinha? Dá para desfazer logo em seguida.')) return;
     change((c) => ({ ...c, stickers: c.stickers.filter((s) => s.key !== key) }));
     setSelected(null);
   };
 
-  const uploadCropped = async (blob: Blob) => {
+  const differs = JSON.stringify(content) !== JSON.stringify(draft.published);
+  const restoreAll = () => {
+    if (!window.confirm('Voltar tudo ao que está publicado hoje? As alterações deste rascunho serão descartadas (você ainda pode usar Desfazer).')) return;
+    change(() => JSON.parse(JSON.stringify(draft.published)));
+    setSelected(null);
+    setPageIndex(0);
+  };
+  const restoreSticker = (key: string) => {
+    const original = draft.published.stickers.find((s) => s.key === key);
+    if (!original || !window.confirm('Voltar esta figurinha ao que está publicado?')) return;
+    change((c) => ({ ...c, stickers: c.stickers.map((s) => (s.key === key ? JSON.parse(JSON.stringify(original)) : s)) }));
+  };
+  const cardOf = (key: string) => {
+    const index = content.stickers.findIndex((s) => s.key === key);
+    return details.flatMap((p) => p.slots).find((slot) => slot.card && slot.card.id === -(index + 1))?.card;
+  };
+
+  const uploadCropped = async (blob: Blob, state: CropState) => {
     const job = cropping;
     setCropping(null);
     if (!job) return;
@@ -386,7 +479,17 @@ export function EditorChapter() {
     try {
       const asset = await api<AssetView>(`${base}/assets`, { form });
       setAssets((all) => [...all, asset]);
-      job.apply(asset);
+      let sourceId: number | undefined;
+      if (job.kind === 'mosaic' && job.newSource) {
+        // A original fica guardada (privada) para o mosaico poder ser reenquadrado depois sem reenviar.
+        const original = new FormData();
+        original.append('file', job.file);
+        original.append('kind', 'mosaic_source');
+        const source = await api<AssetView>(`${base}/assets`, { form: original });
+        setAssets((all) => [...all, source]);
+        sourceId = source.id;
+      }
+      job.apply(asset, state, sourceId);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -432,33 +535,60 @@ export function EditorChapter() {
   const mosaic = content.mosaic;
   const org = content.org ?? draft.published.org ?? { name: chapter.org.name, description: chapter.org.description, color: chapter.org.color, logo_asset_id: null };
   const setOrg = (patch: Partial<NonNullable<ChapterContent['org']>>) => change((c) => ({ ...c, org: { ...org, ...patch } }));
-  const pickMosaic = (file: File) => {
-    mosaicFile.current = file;
-    setCropping({ file, kind: 'mosaic', apply: (asset) => change((c) => ({ ...c, mosaic: { cols: c.mosaic?.cols ?? 2, rows: c.mosaic?.rows ?? 3, asset_id: asset.id } })) });
-  };
-  const repositionMosaic = async () => {
+  const pickMosaic = (file: File) =>
+    setCropping({
+      file, kind: 'mosaic', newSource: true,
+      apply: (asset, state, sourceId) => change((c) => ({ ...c, mosaic: { cols: c.mosaic?.cols ?? 2, rows: c.mosaic?.rows ?? 3, asset_id: asset.id, source_asset_id: sourceId ?? null, crop: state } })),
+    });
+  // Ajustar: reabre a imagem ORIGINAL com o enquadramento salvo (sem original, usa a já recortada).
+  const adjustMosaic = async () => {
     try {
-      let file = mosaicFile.current;
-      if (!file) {
-        const url = assetUrl(mosaic?.asset_id ?? null);
-        if (!url) return;
-        const blob = await (await fetch(url)).blob();
-        file = new File([blob], 'mosaico.jpg', { type: blob.type });
-      }
-      pickMosaic(file);
+      const sourceUrl = assetUrl(mosaic?.source_asset_id ?? null);
+      const url = sourceUrl ?? assetUrl(mosaic?.asset_id ?? null);
+      if (!url) return;
+      const blob = await (await fetch(url)).blob();
+      const file = new File([blob], 'mosaico.jpg', { type: blob.type });
+      setCropping({
+        file, kind: 'mosaic', initial: sourceUrl ? mosaic?.crop ?? null : null, newSource: !sourceUrl,
+        apply: (asset, state, sourceId) => change((c) => ({ ...c, mosaic: { ...c.mosaic!, asset_id: asset.id, source_asset_id: sourceId ?? c.mosaic?.source_asset_id ?? null, crop: state } })),
+      });
     } catch {
       setError('Não foi possível abrir a imagem. Escolha o arquivo de novo.');
     }
   };
 
+  // Peça do mosaico = figurinha como as outras. Sem texto próprio, vale o que o servidor gera.
+  const pieceTotal = mosaic ? mosaic.cols * mosaic.rows : 0;
+  const pieceOf = (index: number): MosaicPiece =>
+    mosaic?.pieces?.find((p) => p.index === index) ?? {
+      index, name: `${org.name}: peça ${index + 1} de ${pieceTotal}`, hint: `Peça ${index + 1} do mosaico`, back_text: org.description, back_links: [],
+    };
+  const setPieceFields = (index: number, patch: Partial<MosaicPiece>) =>
+    change((c) => {
+      if (!c.mosaic) return c;
+      const others = (c.mosaic.pieces ?? []).filter((p) => p.index !== index);
+      return { ...c, mosaic: { ...c.mosaic, pieces: [...others, { ...pieceOf(index), ...patch }].sort((a, b) => a.index - b.index) } };
+    });
+  const piecePreview = piece !== null && mosaic ? pieceOf(piece) : null;
   return (
     <div className="editor">
       {cropping ? (
-        <ImageCropper file={cropping.file} spec={crop(cropping.kind, landscape, { cols: mosaic?.cols ?? 2, rows: mosaic?.rows ?? 3 })} onDone={uploadCropped} onCancel={() => setCropping(null)} />
+        <ImageCropper file={cropping.file} spec={crop(cropping.kind, landscape, { cols: mosaic?.cols ?? 2, rows: mosaic?.rows ?? 3 })} initial={cropping.initial} onDone={uploadCropped} onCancel={() => setCropping(null)} />
+      ) : null}
+      {pieceSheet && piecePreview ? (
+        <StickerSheet
+          card={{
+            id: -(1000 + piecePreview.index), number: piecePreview.index + 1, name: piecePreview.name, image_url: pieceImage, size: 'P', tag: 'mosaico',
+            rarity: { name: 'mosaico', rank: 1, color: '#6b7280' }, org_id: chapter.org.id, org_name: org.name, org_color: org.color, page_no: 0,
+            is_mosaic_piece: true, mosaic_index: piecePreview.index,
+          }}
+          preview={{ back_text: piecePreview.back_text, back_links: piecePreview.back_links }}
+          onClose={() => setPieceSheet(false)}
+        />
       ) : null}
       {inspect ? (() => {
         const sticker = content.stickers.find((item) => item.key === inspect);
-        const card = details.flatMap((p) => p.slots).find((slot) => sticker && slot.card && slot.card.id === -(content.stickers.indexOf(sticker) + 1))?.card;
+        const card = cardOf(inspect);
         return sticker && card ? <StickerSheet card={card} preview={{ back_text: sticker.back_text, back_links: sticker.back_links }} onClose={() => setInspect(null)} /> : null;
       })() : null}
       <header className="editor-top">
@@ -477,31 +607,43 @@ export function EditorChapter() {
       {note ? <Message kind="ok">{note}</Message> : null}
 
       <div className="segmented editor-tabs" role="tablist" aria-label="Seções do editor">
-        {([['pages', 'Páginas'], ['mosaic', 'Mosaico'], ['general', 'Geral']] as const).map(([value, label]) => (
+        {([['pages', 'Páginas'], ['general', 'Geral']] as const).map(([value, label]) => (
           <button key={value} type="button" role="tab" aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{label}</button>
         ))}
       </div>
 
       {tab === 'pages' ? (
+        <nav className="page-chips" aria-label="Páginas do capítulo">
+          {pages.map((p, index) => (
+            <button key={p.page_no} type="button" className={!mosaicPage && p.page_no === page.page_no ? 'active' : ''} onClick={() => { setMosaicPage(false); setPageIndex(index); setSelected(null); }}>{p.page_no}</button>
+          ))}
+          <button type="button" className="chip-add" disabled={locked || pages.length >= 30} onClick={() => { setMosaicPage(false); addPage(); }} aria-label="Nova página">+</button>
+          <button type="button" className={`chip-mosaic${mosaicPage ? ' active' : ''}`} onClick={() => { setMosaicPage(true); setSelected(null); }}>▦ Mosaico</button>
+        </nav>
+      ) : null}
+
+      {tab === 'pages' && !mosaicPage ? (
         <div className="editor-body">
           <div className="editor-canvas">
-            <nav className="page-chips" aria-label="Páginas do capítulo">
-              {pages.map((p, index) => (
-                <button key={p.page_no} type="button" className={p.page_no === page.page_no ? 'active' : ''} onClick={() => { setPageIndex(index); setSelected(null); }}>{p.page_no}</button>
-              ))}
-              <button type="button" className="chip-add" disabled={locked || pages.length >= 30} onClick={addPage} aria-label="Nova página">+</button>
-            </nav>
+            <div className="editor-toolbar" role="toolbar" aria-label="Ferramentas da página">
+              <button type="button" className="btn" disabled={locked || !depth.past} onClick={() => travel('past')}>↶ Desfazer</button>
+              <button type="button" className="btn" disabled={locked || !depth.future} onClick={() => travel('future')}>↷ Refazer</button>
+              <span className="spacer" />
+              <button type="button" className={`btn${arrange ? ' on' : ''}`} disabled={locked} aria-pressed={arrange} onClick={() => setArrange((v) => !v)}>{arrange ? '✋ Mover: ligado' : '🔒 Mover: desligado'}</button>
+              <button type="button" className="btn" disabled={locked || !differs} onClick={restoreAll}>Voltar ao original</button>
+            </div>
+            {arrange && !locked ? <p className="mode-banner">Modo mover ligado: arraste as figurinhas e puxe o canto para o tamanho. Desligue para só selecionar.</p> : null}
             <div className={`preview-stage edit-stage${landscape ? ' landscape' : ''}`}>
               {detail ? (
                 <StickerPage
                   detail={detail}
                   onOpen={() => {}}
                   lastPasted={null}
-                  overlay={<EditLayer stickers={onPage} selected={selected} head={selected === 'head'} landscape={landscape} locked={locked} onSelect={setSelected} onSlot={(key, slot) => moveSticker(key, slot)} />}
+                  overlay={<EditLayer stickers={onPage} selected={selected} head={selected === 'head'} landscape={landscape} locked={locked} arrange={arrange} onSelect={setSelected} onSlot={(key, slot) => moveSticker(key, slot)} />}
                 />
               ) : null}
             </div>
-            <p className="muted edit-tip">Arraste uma figurinha para mover. Puxe o canto dela para mudar o tamanho. Toque no topo para editar o texto da página.</p>
+            <p className="muted edit-tip">Toque numa figurinha para editar. Para mudar de lugar ou de tamanho, ligue o modo mover. Toque no topo para editar o texto da página.</p>
           </div>
 
           <div className="editor-inspector">
@@ -524,6 +666,22 @@ export function EditorChapter() {
 
             {current ? (
               <section className="panel paper inspector" aria-label={`Editar ${current.name}`}>
+                <div className="sticker-peek">
+                  {cardOf(current.key) ? <div className="peek-card"><StickerArt card={cardOf(current.key)!} /></div> : null}
+                  <div className="photo-actions">
+                    <button type="button" className="btn" onClick={() => setInspect(current.key)}>Ver e virar</button>
+                    {published.has(current.key) ? <button type="button" className="btn" disabled={locked} onClick={() => restoreSticker(current.key)}>Voltar ao original</button> : null}
+                    <small className="muted">Mostra a figurinha como o jogador vê, frente e verso.</small>
+                  </div>
+                </div>
+                <div className="field"><span>Girar na página ({current.slot.rot ?? 0}°)</span>
+                  <span className="zoom-row">
+                    <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a esquerda" onClick={() => setRot(current, (current.slot.rot ?? 0) - 5)}>⟲</button>
+                    <input type="range" min={-45} max={45} step={1} disabled={locked} value={clamp(current.slot.rot ?? 0, -45, 45)} onChange={(e) => setRot(current, Number(e.target.value))} aria-label="Ângulo da figurinha" />
+                    <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a direita" onClick={() => setRot(current, (current.slot.rot ?? 0) + 5)}>⟳</button>
+                    <button type="button" className="btn" disabled={locked || !current.slot.rot} onClick={() => setRot(current, 0)}>Zerar</button>
+                  </span>
+                </div>
                 <div className="inspector-photo">
                   <div className="photo-frame">{assetUrl(current.asset_id) ? <img src={assetUrl(current.asset_id)!} alt="" /> : <span>Sem imagem</span>}</div>
                   <div className="photo-actions">
@@ -574,7 +732,6 @@ export function EditorChapter() {
                     <small>É só uma sugestão: quem publica decide a raridade e o número.</small>
                   </label>
                   <label className="field check"><input type="checkbox" disabled={locked || fixed(current.key)} checked={current.active} onChange={(e) => setSticker(current.key, { active: e.target.checked })} /> <span>Aparece na página e nos pacotes</span></label>
-                  <button type="button" className="btn" onClick={() => setInspect(current.key)}>Ver como o jogador vê</button>
                   {!fixed(current.key) ? <button type="button" className="link danger" disabled={locked} onClick={() => removeSticker(current.key)}>Remover figurinha</button> : null}
                 </details>
               </section>
@@ -611,22 +768,23 @@ export function EditorChapter() {
         </div>
       ) : null}
 
-      {tab === 'mosaic' ? (
+      {tab === 'pages' && mosaicPage ? (
         <div className="editor-body">
           <div className="editor-canvas">
+            <label className="field check"><input type="checkbox" checked={mosaicLines} onChange={(e) => setMosaicLines(e.target.checked)} /> <span>Mostrar as linhas que dividem as figurinhas</span></label>
             <div className={`preview-stage edit-stage`}>
-              {mosaicDetail ? <MosaicPage detail={mosaicDetail} onOpen={() => {}} lastPasted={null} /> : <p className="empty-mosaic">Nenhuma imagem de mosaico ainda.</p>}
+              {mosaicDetail ? <MosaicPage detail={mosaicDetail} onOpen={(slot) => setPieceIndex(slot.mosaic_index ?? null)} lastPasted={null} lines={mosaicLines} selected={piece} /> : <p className="empty-mosaic">Nenhuma imagem de mosaico ainda.</p>}
             </div>
           </div>
           <div className="editor-inspector">
             <section className="panel paper inspector">
               <h2>Mosaico</h2>
-              <p className="muted">Uma imagem grande cortada em peças do tamanho de uma figurinha normal. Ao mudar colunas ou linhas, use Reposicionar para reenquadrar a imagem.</p>
+              <p className="muted">Uma imagem grande cortada em peças do tamanho de uma figurinha normal. A original fica guardada: use Ajustar imagem para aproximar, girar, espelhar e reenquadrar quando quiser, inclusive depois de mudar a grade.</p>
               <div className="photo-actions row">
                 <PickButton primary label={mosaic?.asset_id ? 'Trocar imagem' : 'Escolher imagem'} disabled={locked || (frozen && mosaic?.asset_id == null)} onPick={pickMosaic} />
-                {mosaic?.asset_id ? <button type="button" className="btn" disabled={locked} onClick={repositionMosaic}>Reposicionar</button> : null}
+                {mosaic?.asset_id ? <button type="button" className="btn" disabled={locked} onClick={adjustMosaic}>Ajustar imagem</button> : null}
               </div>
-              {mosaic?.asset_id && !frozen && !locked ? <button type="button" className="link danger" onClick={() => change((c) => ({ ...c, mosaic: null }))}>Remover mosaico</button> : null}
+              {mosaic?.asset_id && !frozen && !locked ? <button type="button" className="link danger" onClick={() => window.confirm('Remover o mosaico?') && change((c) => ({ ...c, mosaic: null }))}>Remover mosaico</button> : null}
               {mosaic ? (
                 <div className="steppers">
                   {([['cols', 'Colunas'], ['rows', 'Linhas']] as const).map(([axis, label]) => (
@@ -641,6 +799,51 @@ export function EditorChapter() {
                 </div>
               ) : null}
             </section>
+            {mosaic?.asset_id ? (
+              <section className="panel paper inspector" aria-label="Peças do mosaico">
+                <h2>Peças</h2>
+                <p className="muted">Cada peça é uma figurinha: nome, dica e verso próprios. Toque numa peça na imagem ou na lista.</p>
+                <div className="piece-grid" style={{ gridTemplateColumns: `repeat(${Math.min(mosaic.cols, 5)}, 1fr)` }}>
+                  {Array.from({ length: pieceTotal }, (_, index) => (
+                    <button key={index} type="button" className={piece === index ? 'active' : ''} onClick={() => setPieceIndex(piece === index ? null : index)}>{index + 1}</button>
+                  ))}
+                </div>
+                {piecePreview ? (
+                  <>
+                    <div className="sticker-peek">
+                      {pieceImage ? <div className="peek-card"><div className="sticker rank-1"><img src={pieceImage} alt="" /></div></div> : null}
+                      <div className="photo-actions">
+                        <b>Peça {piecePreview.index + 1} de {pieceTotal}</b>
+                        <button type="button" className="btn" onClick={() => setPieceSheet(true)}>Ver e virar</button>
+                      </div>
+                    </div>
+                    <label className="field"><span>Nome</span>
+                      <input maxLength={120} disabled={locked} value={piecePreview.name} onChange={(e) => setPieceFields(piecePreview.index, { name: e.target.value })} />
+                    </label>
+                    <label className="field"><span>Dica no espaço vazio</span>
+                      <input maxLength={160} disabled={locked} value={piecePreview.hint} onChange={(e) => setPieceFields(piecePreview.index, { hint: e.target.value })} />
+                    </label>
+                    <label className="field"><span>Texto do verso <Counter value={piecePreview.back_text} max={2000} /></span>
+                      <textarea rows={4} maxLength={2000} disabled={locked} value={piecePreview.back_text} onChange={(e) => setPieceFields(piecePreview.index, { back_text: e.target.value })} />
+                    </label>
+                    <div className="field"><span>Links no verso</span>
+                      {piecePreview.back_links.map((link, i) => (
+                        <div key={i} className="link-row">
+                          <input aria-label={`Nome do link ${i + 1}`} placeholder="Nome" maxLength={40} disabled={locked} value={link.label}
+                            onChange={(e) => setPieceFields(piecePreview.index, { back_links: piecePreview.back_links.map((l, j) => (j === i ? { ...l, label: e.target.value } : l)) })} />
+                          <input aria-label={`Endereço do link ${i + 1}`} type="url" placeholder="https://…" maxLength={300} disabled={locked} value={link.url}
+                            onChange={(e) => setPieceFields(piecePreview.index, { back_links: piecePreview.back_links.map((l, j) => (j === i ? { ...l, url: e.target.value } : l)) })} />
+                          <button type="button" className="link danger" disabled={locked} onClick={() => setPieceFields(piecePreview.index, { back_links: piecePreview.back_links.filter((_, j) => j !== i) })}>Tirar</button>
+                        </div>
+                      ))}
+                      {piecePreview.back_links.length < MAX_LINKS ? (
+                        <button type="button" className="link" disabled={locked} onClick={() => setPieceFields(piecePreview.index, { back_links: [...piecePreview.back_links, { label: '', url: 'https://' }] })}>+ Adicionar link</button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </section>
+            ) : null}
           </div>
         </div>
       ) : null}

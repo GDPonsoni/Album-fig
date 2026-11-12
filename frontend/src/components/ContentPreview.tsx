@@ -34,7 +34,7 @@ export function ContentPreview({ content, org, assets, rarities, numbers, page, 
       </figcaption>
       <div className={`preview-stage${landscape ? ' landscape' : ''}`}>
         {detail ? (
-          detail.kind === 'mosaic' ? <MosaicPage detail={detail} onOpen={noop} lastPasted={null} /> : <StickerPage detail={detail} onOpen={noop} lastPasted={null} />
+          detail.kind === 'mosaic' ? <MosaicPage detail={detail} onOpen={noop} lastPasted={null} lines /> : <StickerPage detail={detail} onOpen={noop} lastPasted={null} />
         ) : null}
       </div>
     </figure>

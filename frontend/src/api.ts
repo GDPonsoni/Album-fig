@@ -108,7 +108,7 @@ export interface Slot {
   sticker_id: number;
   number: number;
   size: 'P' | 'M' | 'G';
-  layout: { x: number; y: number; w: number; h: number };
+  layout: { x: number; y: number; w: number; h: number; rot?: number };
   mosaic_index: number | null;
   hint: string;
   filled: boolean;
@@ -131,6 +131,24 @@ export interface PageDetail {
     mosaic_rows: number;
   };
   slots: Slot[];
+}
+
+export interface MosaicPiece {
+  index: number;
+  name: string;
+  hint: string;
+  back_text: string;
+  back_links: { label: string; url: string }[];
+}
+
+/** Enquadramento do mosaico (zoom, deslocamento relativo ao quadro, giros de 90°, espelho). */
+export interface CropState {
+  zoom: number;
+  x: number;
+  y: number;
+  turns: number;
+  flip: boolean;
+  fit: 'fill' | 'whole';
 }
 
 export interface User {
@@ -157,7 +175,7 @@ export interface ContentSticker {
   back_text: string;
   back_links: { label: string; url: string }[];
   page_no: number;
-  slot: { x: number; y: number; w: number; h: number };
+  slot: { x: number; y: number; w: number; h: number; rot?: number };
   suggested_rarity_id: number | null;
   active: boolean;
 }
@@ -174,7 +192,7 @@ export interface ChapterContent {
   layout: { orientation: 'portrait' | 'landscape' };
   org?: { name: string; description: string; color: string; logo_asset_id: number | null } | null;
   pages: ContentPage[];
-  mosaic: { asset_id: number | null; cols: number; rows: number } | null;
+  mosaic: { asset_id: number | null; cols: number; rows: number; source_asset_id?: number | null; crop?: CropState | null; pieces?: MosaicPiece[] } | null;
   stickers: ContentSticker[];
 }
 

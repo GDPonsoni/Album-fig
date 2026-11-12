@@ -140,13 +140,46 @@ export function AccountPage() {
         <p className="muted">Seu e-mail não aparece para os outros jogadores. Os álbuns que você jogou ficam guardados na sua conta.</p>
       </section>
       <MyAlbumsSection />
-      {user.editor_chapters ? <Link className="btn btn-primary" to="/editor">Editar meu capítulo</Link> : null}
-      {user.is_admin || user.reviewer_chapters ? <TwoFactor /> : null}
-      {user.promoter ? <Link className="btn" to="/promotor">Gerar códigos de pacote</Link> : null}
-      {user.is_admin ? <Link className="btn" to="/admin">Painel admin</Link> : null}
-      {user.is_admin ? <Link className="btn" to="/admin/revisoes">Revisões e editores</Link> : null}
-      {!user.is_admin && user.reviewer_chapters ? <Link className="btn" to="/admin/revisoes">Revisar capítulos</Link> : null}
       <button className="btn" onClick={signOut}>Sair</button>
+      {user.is_admin || user.editor_chapters || user.reviewer_chapters || user.promoter ? (
+        <section className="role-zone" aria-label="Áreas de trabalho">
+          <h2>Áreas de trabalho</h2>
+          <p>Você tem cargos neste álbum. Cada um abre uma área própria.</p>
+          {user.is_admin ? (
+            <div className="role-card role-admin">
+              <span className="role-badge">Superadmin</span>
+              <p>Gerencia álbuns, códigos, cargos e o rastreio de tudo.</p>
+              <div className="role-links">
+                <Link className="btn" to="/admin">Painel admin</Link>
+                <Link className="btn" to="/admin/revisoes">Revisões e cargos</Link>
+                <Link className="btn" to="/admin/rastreio">Rastreio</Link>
+              </div>
+            </div>
+          ) : null}
+          {user.is_admin || user.reviewer_chapters ? (
+            <div className="role-card role-reviewer">
+              <span className="role-badge">Revisor</span>
+              <p>Aprova ou rejeita o que os editores enviam e publica no álbum.</p>
+              <div className="role-links"><Link className="btn" to="/admin/revisoes">Revisar capítulos</Link></div>
+            </div>
+          ) : null}
+          {user.editor_chapters ? (
+            <div className="role-card role-editor">
+              <span className="role-badge">Editor</span>
+              <p>Personaliza o seu capítulo e envia para revisão.</p>
+              <div className="role-links"><Link className="btn" to="/editor">Editar meu capítulo</Link></div>
+            </div>
+          ) : null}
+          {user.promoter ? (
+            <div className="role-card role-promoter">
+              <span className="role-badge">Promotor</span>
+              <p>Gera códigos de pacote extra, com QR para distribuir.</p>
+              <div className="role-links"><Link className="btn" to="/promotor">Gerar códigos de pacote</Link></div>
+            </div>
+          ) : null}
+          {user.is_admin || user.reviewer_chapters ? <TwoFactor /> : null}
+        </section>
+      ) : null}
     </div>
   );
 }

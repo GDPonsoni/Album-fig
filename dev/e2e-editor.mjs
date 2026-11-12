@@ -115,12 +115,12 @@ step('envio trava o rascunho');
 const admin = await open(true);
 await login(admin, 'admin@example.com');
 await admin.goto(`${BASE}/admin/revisoes`);
-await admin.getByRole('button', { name: 'Revisar' }).first().click();
+await admin.getByRole('button', { name: 'Revisar', exact: true }).first().click();
 await admin.getByText('O que muda').waitFor();
 await admin.getByText(nome).first().waitFor();
 await admin.getByRole('figure', { name: 'Proposto' }).waitFor();
 await shot(admin, '34-revisao');
-await admin.getByRole('button', { name: 'Aprovar' }).click();
+await admin.getByRole('button', { name: 'Só aprovar' }).click();
 await admin.getByRole('dialog', { name: 'Código de duas etapas' }).waitFor(); // a sessão ainda não confirmou o segundo fator
 await admin.getByRole('dialog', { name: 'Código de duas etapas' }).getByLabel('Código').fill(totp());
 await admin.getByRole('button', { name: 'Confirmar' }).click();
