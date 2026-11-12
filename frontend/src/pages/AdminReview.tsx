@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, post, type AssetView, type ChapterContent, type OrgView, type RarityView } from '../api';
 import { ContentPreview } from '../components/ContentPreview';
+import { useAuth } from '../auth';
 import { MfaError, useMfa } from '../components/Mfa';
 import { Message } from '../components/ui';
 
@@ -17,7 +18,7 @@ const FIELD: Record<string, string> = {
   layout: 'Layout', background: 'Fundo', description: 'Descrição', color: 'Cor',
 };
 const ACTION: Record<string, string> = {
-  'role.grant': 'Papel concedido', 'role.revoke': 'Papel revogado', 'revision.submit': 'Revisão enviada',
+  'role.grant': 'Papel concedido', 'role.revoke': 'Papel revogado', 'revision.submit': 'Revisão enviada', 'revision.edit': 'Rascunho editado', 'promo.codes_create': 'Códigos gerados', 'revision.withdraw': 'Envio retirado',
   'revision.approve': 'Revisão aprovada', 'revision.reject': 'Revisão rejeitada', 'revision.publish': 'Revisão publicada',
   'revision.rollback': 'Rollback', 'asset.upload': 'Imagem enviada', 'asset.delete': 'Imagem apagada',
   'admin.chapter_create': 'Capítulo criado',
@@ -102,7 +103,7 @@ function Diff({ diff }: { diff: Row }) {
   );
 }
 
-function Detail({ id, rarities, onChanged, onClose }: { id: number; rarities: RarityView[]; onChanged: () => void; onClose: () => void }) {
+function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean; onChanged: () => void; onClose: () => void }) {
   const [data, setData] = useState<Row | null>(null);
   const [history, setHistory] = useState<Row[]>([]);
   const [trail, setTrail] = useState<Row[]>([]);
@@ -116,8 +117,8 @@ function Detail({ id, rarities, onChanged, onClose }: { id: number; rarities: Ra
     const detail = await api<Row>(`/admin/revisions/${id}`);
     setData(detail);
     setHistory(await api<Row[]>(`/admin/revisions?chapter_id=${detail.chapter_id}`));
-    setTrail(await api<Row[]>(`/admin/chapters/${detail.chapter_id}/audit`));
-  }, [id]);
+    if (admin) setTrail(await api<Row[]>(`/admin/chapters/${detail.chapter_id}/audit`));
+  }, [id, admin]);
   useEffect(() => {
     setData(null);
     setOverrides({});
@@ -138,6 +139,7 @@ function Detail({ id, rarities, onChanged, onClose }: { id: number; rarities: Ra
     }
   };
   if (!data) return <section>{error ? <MfaError error={error} /> : <p className="muted">Carregando revisão…</p>}</section>;
+  const rarities: RarityView[] = data.rarities;
 
   const content = data.content as ChapterContent;
   const published = data.published as ChapterContent;
@@ -252,6 +254,7 @@ function Detail({ id, rarities, onChanged, onClose }: { id: number; rarities: Ra
 
 function Editors({ rows, reload }: { rows: Row[]; reload: () => void }) {
   const [email, setEmail] = useState<Record<number, string>>({});
+  const [role, setRole] = useState<Record<number, 'editor' | 'reviewer'>>({});
   const [error, setError] = useState<Error | null>(null);
   const { run, prompt } = useMfa();
   const guard = async (action: () => Promise<unknown>) => {
@@ -266,15 +269,15 @@ function Editors({ rows, reload }: { rows: Row[]; reload: () => void }) {
   const grant = (event: FormEvent, chapterId: number) => {
     event.preventDefault();
     guard(async () => {
-      await post(`/admin/chapters/${chapterId}/editors`, { email: email[chapterId] });
+      await post(`/admin/chapters/${chapterId}/editors`, { email: email[chapterId], role: role[chapterId] ?? 'editor' });
       setEmail((all) => ({ ...all, [chapterId]: '' }));
     });
   };
   return (
     <section>
       {prompt}
-      <h2>Orgs e editores</h2>
-      <p className="muted">Editor só escreve rascunho do próprio capítulo. Revogar vale na hora.</p>
+      <h2>Orgs, editores e revisores</h2>
+      <p className="muted">Editor só escreve rascunho do próprio capítulo. Revisor aprova, rejeita, publica e desfaz as revisões do capítulo (com 2FA) e não julga o que ele mesmo escreveu. Revogar vale na hora.</p>
       <MfaError error={error} />
       <ul className="admin-list editors">
         {rows.map((row) => (
@@ -292,10 +295,20 @@ function Editors({ rows, reload }: { rows: Row[]; reload: () => void }) {
                   <button className="link danger" onClick={() => window.confirm(`Tirar ${editor.nickname} de ${row.org_name}?`) && guard(() => api(`/admin/roles/${editor.grant_id}`, { method: 'DELETE' }))}>Revogar</button>
                 </span>
               )) : <small className="muted">Sem editores</small>}
+              {row.reviewers.map((reviewer: Row) => (
+                <span key={reviewer.grant_id} className="editor-chip">
+                  Revisor: {reviewer.nickname} <small>{reviewer.email}</small>
+                  <button className="link danger" onClick={() => window.confirm(`Tirar ${reviewer.nickname} da revisão de ${row.org_name}?`) && guard(() => api(`/admin/roles/${reviewer.grant_id}`, { method: 'DELETE' }))}>Revogar</button>
+                </span>
+              ))}
               {row.album_status !== 'ended' ? (
                 <form className="inline-form" onSubmit={(event) => grant(event, row.chapter_id)}>
                   <input type="email" required aria-label={`E-mail do novo editor de ${row.org_name}`} placeholder="e-mail da conta" value={email[row.chapter_id] ?? ''} onChange={(e) => setEmail({ ...email, [row.chapter_id]: e.target.value })} />
-                  <button className="btn">Tornar editor</button>
+                  <select aria-label="Papel" value={role[row.chapter_id] ?? 'editor'} onChange={(e) => setRole({ ...role, [row.chapter_id]: e.target.value as 'editor' | 'reviewer' })}>
+                    <option value="editor">Editor</option>
+                    <option value="reviewer">Revisor</option>
+                  </select>
+                  <button className="btn">Conceder</button>
                 </form>
               ) : null}
             </span>
@@ -307,32 +320,70 @@ function Editors({ rows, reload }: { rows: Row[]; reload: () => void }) {
   );
 }
 
+function Promoters() {
+  const [rows, setRows] = useState<Row[]>([]);
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState<Error | null>(null);
+  const { run, prompt } = useMfa();
+  const load = useCallback(() => api<Row[]>('/admin/promoters').then(setRows).catch(() => {}), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const guard = async (action: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await run(action);
+      load();
+    } catch (err) {
+      setError(err as Error);
+    }
+  };
+  return (
+    <section>
+      {prompt}
+      <h2>Promotores</h2>
+      <p className="muted">Promotor gera códigos de pacote extra (com QR) dentro da cota diária. Cada código e pacote guarda quem o gerou. Revogar vale na hora.</p>
+      <MfaError error={error} />
+      <ul className="admin-list">
+        {rows.filter((row) => row.state === 'active').map((row) => (
+          <li key={row.id}>
+            <span><b>{row.nickname}</b> <small className="album-dates">{row.email}</small></span>
+            <button className="link danger" onClick={() => window.confirm(`Tirar o papel de promotor de ${row.nickname}?`) && guard(() => api(`/admin/roles/${row.id}`, { method: 'DELETE' }))}>Revogar</button>
+          </li>
+        ))}
+      </ul>
+      <form className="inline-form" onSubmit={(event) => { event.preventDefault(); guard(async () => { await post('/admin/promoters', { email }); setEmail(''); }); }}>
+        <input type="email" required aria-label="E-mail do novo promotor" placeholder="e-mail da conta" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <button className="btn">Tornar promotor</button>
+      </form>
+    </section>
+  );
+}
+
 const QUEUES = ['submitted', 'approved', 'rejected', 'published'] as const;
 
 export default function AdminReviewPage() {
   const [queue, setQueue] = useState<(typeof QUEUES)[number]>('submitted');
   const [rows, setRows] = useState<Row[]>([]);
   const [overview, setOverview] = useState<Row[]>([]);
-  const [rarities, setRarities] = useState<RarityView[]>([]);
+  const { user } = useAuth();
+  const admin = !!user?.is_admin;
   const [openId, setOpenId] = useState<number | null>(null);
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
     api<Row[]>(`/admin/revisions?status=${queue}`).then(setRows).catch((e) => setError(e.message));
-    api<Row[]>('/admin/editors/overview').then(setOverview).catch(() => {});
-  }, [queue]);
+    if (admin) api<Row[]>('/admin/editors/overview').then(setOverview).catch(() => {});
+  }, [queue, admin]);
   useEffect(() => {
     load();
   }, [load]);
-  useEffect(() => {
-    api<RarityView[]>('/admin/rarities').then((list) => setRarities([...list].sort((a, b) => a.rank - b.rank))).catch(() => {});
-  }, []);
 
   return (
     <div className="admin">
       <header className="admin-top">
         <h1>Revisões</h1>
-        <Link to="/admin">Painel admin</Link>
+        {admin ? <Link to="/admin">Painel admin</Link> : <Link to="/conta">Minha conta</Link>}
       </header>
       <section>
         <nav className="admin-tabs" aria-label="Fila de revisões">
@@ -343,7 +394,7 @@ export default function AdminReviewPage() {
           {rows.map((row) => (
             <li key={row.id} className={row.id === openId ? 'is-open' : ''}>
               <span><i className="dot" style={{ background: row.org_color }} /> <b>{row.org_name}</b> · revisão {row.number}
-                <small className="album-dates">{row.album.title} · {row.author ?? '—'} · {when(row.submitted_at ?? row.updated_at)}{row.is_live ? ' · no ar' : ''}</small>
+                <small className="album-dates">{row.album.title} · {(row.contributors?.length ? row.contributors.join(', ') : row.author) ?? '—'} · {when(row.submitted_at ?? row.updated_at)}{row.is_live ? ' · no ar' : ''}</small>
               </span>
               <button className="link" onClick={() => setOpenId(row.id === openId ? null : row.id)}>{row.id === openId ? 'Fechar' : 'Revisar'}</button>
             </li>
@@ -351,8 +402,9 @@ export default function AdminReviewPage() {
         </ul>
         {rows.length ? null : <p className="muted">Nada nesta fila.</p>}
       </section>
-      {openId ? <Detail key={openId} id={openId} rarities={rarities} onChanged={load} onClose={() => setOpenId(null)} /> : null}
-      <Editors rows={overview} reload={load} />
+      {openId ? <Detail key={openId} id={openId} admin={admin} onChanged={load} onClose={() => setOpenId(null)} /> : null}
+      {admin ? <Editors rows={overview} reload={load} /> : null}
+      {admin ? <Promoters /> : null}
     </div>
   );
 }

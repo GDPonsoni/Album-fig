@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useOnActivate, useShell } from '../components/Layout';
+import { QrScanner } from '../components/QrScanner';
 import { StickerSheet } from '../components/StickerSheet';
 import { api, post, type AlbumInfo, type Card, type GrantView } from '../api';
 import { useAuth } from '../auth';
@@ -22,7 +23,6 @@ interface Stock {
   next_pack_kind: { slug: string; name: string; is_premium: boolean } | null;
   server_now: string;
   refill_minutes: number;
-  dev_tools: boolean;
 }
 
 const HISTORY_LIMIT = 20;
@@ -286,42 +286,6 @@ function History({ openings }: { openings: Opening[] }) {
   );
 }
 
-// Temporário: atalhos de teste, some junto com app/api/dev.py.
-function DevTools({ onChanged, onCode }: { onChanged: () => void; onCode: (code: string) => void }) {
-  const [state, setState] = useState<{ ok?: string; error?: string }>({});
-  const run = async (action: () => Promise<string>) => {
-    setState({});
-    try {
-      setState({ ok: await action() });
-      onChanged();
-    } catch (err) {
-      setState({ error: (err as Error).message });
-    }
-  };
-  const addPack = (slug: string) => run(async () => {
-    await post('/dev/packs', { slug });
-    return 'Pacote adicionado.';
-  });
-  const makeCode = (slug: string) => run(async () => {
-    const { code } = await post<{ code: string }>('/dev/codes', { slug });
-    onCode(code);
-    return `Código ${code} preenchido no campo abaixo.`;
-  });
-  return (
-    <section className="panel dev-tools">
-      <h2>Testes (temporário)</h2>
-      <div className="dev-actions">
-        <button className="btn" onClick={() => addPack('comum')}>+ Pacote comum</button>
-        <button className="btn" onClick={() => addPack('premium')}>+ Pacote premium</button>
-        <button className="btn" onClick={() => makeCode('comum')}>Gerar código comum</button>
-        <button className="btn" onClick={() => makeCode('premium')}>Gerar código premium</button>
-      </div>
-      {state.ok ? <Message kind="ok">{state.ok}</Message> : null}
-      {state.error ? <Message>{state.error}</Message> : null}
-    </section>
-  );
-}
-
 function CodeReward({ grant, onOpen, onClose }: { grant: GrantView; onOpen: () => void; onClose: () => void }) {
   useEffect(() => buzz([30, 40, 70]), []);
   return (
@@ -341,9 +305,19 @@ function CodeReward({ grant, onOpen, onClose }: { grant: GrantView; onOpen: () =
   );
 }
 
+function CameraIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+}
+
 function RedeemForm({ onRedeemed, disabled, code, setCode }: { onRedeemed: (grant: GrantView) => void; disabled: boolean; code: string; setCode: (code: string) => void }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -374,7 +348,9 @@ function RedeemForm({ onRedeemed, disabled, code, setCode }: { onRedeemed: (gran
           onChange={(event) => setCode(event.target.value)}
         />
         <button className="btn btn-primary" disabled={busy || disabled}>{busy ? 'Resgatando…' : 'Resgatar'}</button>
+        <button type="button" className="btn" disabled={disabled} title="Ler QR com a câmera" aria-label="Ler QR com a câmera" onClick={() => setScanning(true)}><CameraIcon /></button>
       </form>
+      {scanning ? <QrScanner onClose={() => setScanning(false)} /> : null}
       {error ? <Message>{error}</Message> : null}
     </section>
   );
@@ -436,7 +412,6 @@ export function PacksPage() {
       {data?.album ? (
         <>
           <Drawer data={data} left={left} disabled={!user?.verified} onOpen={setOpening} />
-          {data.dev_tools && user?.verified ? <DevTools onChanged={reload} onCode={setCode} /> : null}
           <RedeemForm onRedeemed={(grant) => { setReward(grant); reload(); }} disabled={!user?.verified} code={code} setCode={setCode} />
         </>
       ) : null}

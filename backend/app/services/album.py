@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Album, AlbumChapter, Sticker, User, UserSticker
+from app.services import provenance
 from app.services.albums import album_status, album_view, require_live, require_same_album
 from app.services.core import audit, lock_user, now
 
@@ -191,6 +192,7 @@ def paste(db: Session, user: User, sticker_id: int) -> Sticker:
         raise HTTPException(409, "Esta figurinha já está colada.")
     row.pasted = True
     row.pasted_at = now()
+    provenance.record_paste(db, user.id, sticker_id, row.quantity)
     audit(db, user.id, "sticker.paste", sticker_id=sticker_id, album_id=album.id)
     return row.sticker
 
@@ -216,6 +218,7 @@ def paste_all(db: Session, user: User) -> list[int]:
     for row in rows:
         row.pasted = True
         row.pasted_at = current
+        provenance.record_paste(db, user.id, row.sticker_id, row.quantity)
     ids = [row.sticker_id for row in rows]
     if ids:
         audit(db, user.id, "sticker.paste_all", sticker_ids=ids, album_id=album.id)

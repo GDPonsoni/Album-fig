@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import QRCode from 'qrcode';
-import { parseTradeLink } from '../src/qr.ts';
+import { parseQr, parseRedeemLink, parseTradeLink } from '../src/qr.ts';
 import { decodeFrame } from '../src/qrDecode.ts';
 
 const ORIGIN = 'https://album.example';
@@ -51,7 +51,6 @@ test('só aceita link de troca da própria origem', () => {
     `${ORIGIN}/trocar/${TOKEN}#x`,
     `${ORIGIN}/trocar/${TOKEN}/extra`,
     `${ORIGIN}/trocar/curto`,
-    `${ORIGIN}/r/ABCD-EFGH-2345-6789`,
     `${ORIGIN}/admin`,
     `javascript:alert(1)`,
     `/trocar/${TOKEN}`,
@@ -59,5 +58,17 @@ test('só aceita link de troca da própria origem', () => {
     '',
   ]) {
     assert.equal(parseTradeLink(bad, ORIGIN), null, bad);
+  }
+});
+
+test('QR de pacote: link da origem ou código puro, e a câmera entende os dois tipos', () => {
+  const code = 'ABCD-EFGH-2345-6789';
+  assert.equal(parseRedeemLink(`${ORIGIN}/r/${code}`, ORIGIN), `/r/${code}`);
+  assert.equal(parseRedeemLink(` ${code}\n`, ORIGIN), `/r/${code}`);
+  assert.deepEqual(parseQr(`${ORIGIN}/r/${code}`, ORIGIN), { path: `/r/${code}`, redeem: true });
+  assert.deepEqual(parseQr(`${ORIGIN}/trocar/${TOKEN}`, ORIGIN), { path: `/trocar/${TOKEN}`, redeem: false });
+  for (const bad of [`https://outro.example/r/${code}`, `${ORIGIN}/r/${code}?x=1`, `${ORIGIN}/r/${code}/extra`, `${ORIGIN}/r/ABCD-0O1I-2345-6789`, `${ORIGIN}/r/curto`, 'ABCD-EFGH', 'texto']) {
+    assert.equal(parseRedeemLink(bad, ORIGIN), null, bad);
+    assert.equal(parseQr(bad, ORIGIN), null, bad);
   }
 });

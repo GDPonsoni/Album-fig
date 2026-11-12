@@ -680,7 +680,10 @@ def create_codes(body: CodeBatchIn, admin: User = Depends(admin_user), db: Sessi
     content.require_editable(_get(db, Album, pack.album_id))
     codes = [generate_code() for _ in range(body.count)]
     db.add_all(
-        RedeemCode(code=code, album_id=pack.album_id, pack_type_id=pack.id, label=body.label, expires_at=body.expires_at)
+        RedeemCode(
+            code=code, album_id=pack.album_id, pack_type_id=pack.id, label=body.label, expires_at=body.expires_at,
+            created_by=admin.id,
+        )
         for code in codes
     )
     audit(

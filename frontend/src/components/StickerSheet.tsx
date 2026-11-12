@@ -3,12 +3,15 @@ import { api, type Card } from '../api';
 import { StickerArt } from './ui';
 
 /** Figurinha ampliada. O verso só existe para quem já colou. */
-export function StickerSheet({ card, onClose, pasted = true }: { card: Card; onClose: () => void; pasted?: boolean }) {
-  const [back, setBack] = useState<{ back_text: string; back_links: { label: string; url: string }[] } | null>(null);
+type Back = { back_text: string; back_links: { label: string; url: string }[] };
+
+/** `preview` traz o verso pronto (prévia do editor): não consulta o servidor. */
+export function StickerSheet({ card, onClose, pasted = true, preview }: { card: Card; onClose: () => void; pasted?: boolean; preview?: Back }) {
+  const [back, setBack] = useState<Back | null>(preview ?? null);
   const [flipped, setFlipped] = useState(false);
   useEffect(() => {
-    if (pasted) api(`/stickers/${card.id}/back`).then(setBack).catch(onClose);
-  }, [card.id, onClose, pasted]);
+    if (pasted && !preview) api(`/stickers/${card.id}/back`).then(setBack).catch(onClose);
+  }, [card.id, onClose, pasted, preview]);
   const flip = () => {
     if (pasted) setFlipped((value) => !value);
   };

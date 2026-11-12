@@ -142,6 +142,8 @@ export interface User {
   mfa_enabled: boolean;
   mfa_verified: boolean;
   editor_chapters: number;
+  reviewer_chapters: number;
+  promoter: boolean;
 }
 
 // ---- conteúdo de um capítulo no formato do editor (o mesmo que a API valida)

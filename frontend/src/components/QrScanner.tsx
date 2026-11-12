@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { parseTradeLink } from '../qr';
+import { useNavigate } from 'react-router-dom';
+import { parseQr } from '../qr';
 
 interface Detector {
   detect: (source: HTMLVideoElement) => Promise<{ rawValue: string }[]>;
@@ -9,20 +10,24 @@ type DetectorCtor = new (options: { formats: string[] }) => Detector;
 function cameraError(error: unknown): string {
   const name = (error as { name?: string } | null)?.name;
   if (name === 'NotAllowedError' || name === 'SecurityError') {
-    return 'A câmera foi bloqueada. Libere o acesso à câmera nas permissões do navegador ou peça o link da troca.';
+    return 'A câmera foi bloqueada. Libere o acesso à câmera nas permissões do navegador ou peça o link.';
   }
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'Nenhuma câmera encontrada neste aparelho. Peça o link da troca.';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'Nenhuma câmera encontrada neste aparelho. Use o link ou digite o código.';
   if (name === 'NotReadableError') return 'A câmera está em uso por outro app. Feche-o e tente de novo.';
-  return 'Não foi possível abrir a câmera. Peça o link da troca.';
+  return 'Não foi possível abrir a câmera. Use o link ou digite o código.';
 }
 
-/** Lê o QR de uma troca com a câmera: BarcodeDetector quando existe, jsqr quando não. */
-export function QrScanner({ onRead, onClose }: { onRead: (path: string) => void; onClose: () => void }) {
+/** Lê QR com a câmera: BarcodeDetector quando existe, jsqr quando não. Troca abre a troca; código de pacote é resgatado na hora. */
+export function QrScanner({ onClose }: { onClose: () => void }) {
+  const navigate = useNavigate();
   const video = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
-  const read = useRef(onRead);
-  read.current = onRead;
+  const read = useRef((_: { path: string; redeem: boolean }) => {});
+  read.current = (target) => {
+    onClose();
+    navigate(target.path, { state: target.redeem ? { auto: true } : undefined });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -80,12 +85,12 @@ export function QrScanner({ onRead, onClose }: { onRead: (path: string) => void;
         }
         if (!alive) return;
         if (text) {
-          const path = parseTradeLink(text, window.location.origin);
-          if (path) {
-            read.current(path);
+          const target = parseQr(text, window.location.origin);
+          if (target) {
+            read.current(target);
             return;
           }
-          setNote('Este QR não é de uma troca deste álbum.');
+          setNote('Este QR não é de uma troca nem de um pacote deste álbum.');
         }
         timer = window.setTimeout(scan, 180);
       };
@@ -101,7 +106,7 @@ export function QrScanner({ onRead, onClose }: { onRead: (path: string) => void;
   }, []);
 
   return (
-    <div className="overlay scanner" role="dialog" aria-label="Ler QR de troca">
+    <div className="overlay scanner" role="dialog" aria-label="Ler QR">
       {error ? (
         <p className="message message-error" role="alert">{error}</p>
       ) : (
@@ -110,7 +115,7 @@ export function QrScanner({ onRead, onClose }: { onRead: (path: string) => void;
             <video ref={video} playsInline muted aria-label="Imagem da câmera" />
             <i aria-hidden="true" />
           </div>
-          <p className="scanner-hint">{note || 'Aponte para o QR que a outra pessoa está mostrando.'}</p>
+          <p className="scanner-hint">{note || 'Aponte para um QR de troca ou de pacote.'}</p>
         </>
       )}
       <button className="btn" onClick={onClose}>Fechar</button>

@@ -18,6 +18,8 @@ import './styles.css';
 const AdminPage = lazy(() => import('./pages/Admin'));
 const AdminAlbumsPage = lazy(() => import('./pages/AdminAlbums'));
 const AdminReviewPage = lazy(() => import('./pages/AdminReview'));
+const PromoPage = lazy(() => import('./pages/Promo'));
+const TracePage = lazy(() => import('./pages/AdminTrace'));
 const EditorHome = lazy(() => import('./pages/Editor').then((m) => ({ default: m.EditorHome })));
 const EditorChapter = lazy(() => import('./pages/Editor').then((m) => ({ default: m.EditorChapter })));
 
@@ -47,10 +49,12 @@ createRoot(document.getElementById('root')!).render(
               </RequireAuth>
             }
           />
+          <Route path="/promotor" element={<RequireAuth><Suspense fallback={<Splash />}><PromoPage /></Suspense></RequireAuth>} />
+          <Route path="/admin/rastreio" element={<RequireAuth admin><Suspense fallback={<Splash />}><TracePage /></Suspense></RequireAuth>} />
           <Route
             path="/admin/revisoes"
             element={
-              <RequireAuth admin>
+              <RequireAuth staff>
                 <Suspense fallback={<Splash />}>
                   <AdminReviewPage />
                 </Suspense>

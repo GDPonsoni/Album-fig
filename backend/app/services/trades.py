@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import Album, Sticker, Trade, TradeOffer, User, UserSticker
 from app.services.album import sticker_card
 from app.services.albums import ENDED, album_status, current_album, require_live
+from app.services import provenance
 from app.services.core import audit, cfg, lock_user, now
 from app.services.packs import add_to_inventory
 
@@ -186,7 +187,9 @@ def _settle(db: Session, trade: Trade, creator_offers: list[TradeOffer], partner
     for giver, receiver, offers in moves:
         for offer in offers:
             row = db.get(UserSticker, (giver, offer.sticker_id), populate_existing=True)
+            had = row.quantity
             row.quantity -= offer.quantity
+            provenance.record_trade(db, trade, giver, receiver, offer.sticker_id, offer.quantity, had)
             add_to_inventory(db, receiver, offer.sticker_id, offer.quantity)
 
     trade.state = "done"

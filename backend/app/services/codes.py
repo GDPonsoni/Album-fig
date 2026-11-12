@@ -70,7 +70,7 @@ def redeem(db: Session, user: User, value: str) -> PackGrant:
             or_(RedeemCode.expires_at.is_(None), RedeemCode.expires_at > current),
         )
         .values(redeemed_by=user.id, redeemed_at=current)
-        .returning(RedeemCode.id, RedeemCode.pack_type_id, RedeemCode.label)
+        .returning(RedeemCode.id, RedeemCode.pack_type_id, RedeemCode.label, RedeemCode.created_by)
     ).first()
     if row is None:
         record_hit(db, key)
@@ -78,6 +78,6 @@ def redeem(db: Session, user: User, value: str) -> PackGrant:
         raise HTTPException(400, INVALID)
 
     lock_user(db, user.id)
-    grant = grant_pack(db, user.id, db.get(PackType, row.pack_type_id), "code", str(row.id))
-    audit(db, user.id, "code.redeem", code_id=row.id, label=row.label, album_id=album.id)
+    grant = grant_pack(db, user.id, db.get(PackType, row.pack_type_id), "code", str(row.id), origin_user_id=row.created_by)
+    audit(db, user.id, "code.redeem", code_id=row.id, label=row.label, album_id=album.id, created_by=row.created_by, grant_id=grant.id)
     return grant

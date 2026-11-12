@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api import admin, auth, dev, editor, game, review, trades
+from app.api import admin, auth, dev, editor, game, promo, review, trace, trades
 from app.api.deps import active_grant, current_user
 from app.db import SessionLocal, get_db
 from app.models import Asset, User
@@ -107,6 +107,8 @@ api.include_router(trades.router)
 api.include_router(admin.router)
 api.include_router(review.router)
 api.include_router(editor.router)
+api.include_router(promo.router)
+api.include_router(trace.router)
 
 if not settings.is_prod:
 
@@ -128,11 +130,11 @@ app.include_router(api)
 # O bucket é privado: as imagens só saem por aqui, para quem está logado.
 @app.get("/media/{path:path}", include_in_schema=False)
 def media(path: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    # Imagem enviada por editor fica privada até ser publicada: só o superadmin e os editores
+    # Imagem enviada por editor fica privada até ser publicada: só o superadmin, os editores e os revisores
     # do capítulo a veem. A resposta é a mesma 404 de arquivo inexistente.
     if path.startswith(EDITOR_MEDIA_PREFIX) and not user.is_admin:
         assets = db.scalars(select(Asset).where(Asset.url == f"/media/{path}")).all()
-        if not any(a.status == "approved" or active_grant(db, user.id, a.chapter_id) is not None for a in assets):
+        if not any(a.status == "approved" or active_grant(db, user.id, a.chapter_id, None) is not None for a in assets):
             return JSONResponse({"detail": "Não encontrado."}, status_code=404)
     data = read_media(f"/media/{path}")
     if data is None:
