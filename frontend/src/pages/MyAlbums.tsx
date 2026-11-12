@@ -54,7 +54,6 @@ function Progress({ stats }: { stats: AlbumStats }) {
 function Stats({ stats }: { stats: AlbumStats }) {
   return (
     <dl className="album-stats">
-      <div><dt>Coladas</dt><dd>{stats.pasted}/{stats.total_stickers}</dd></div>
       <div><dt>Recebidas</dt><dd>{stats.received_total}</dd></div>
       <div><dt>Repetidas</dt><dd>{stats.duplicates}</dd></div>
       <div><dt>Trocas</dt><dd>{stats.trades_done}</dd></div>

@@ -453,7 +453,6 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
   }
 
   const readOnly = index.read_only;
-  const meta = pages[safeCurrent];
   const trayCards = index.tray.filter((card) => !hidden.has(card.id));
   const renderPage = (position: number) => {
     if (position === 0) return <CoverPage index={index} goTo={(page) => slideTo(page)} />;
@@ -478,10 +477,7 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
             </button>
           ) : null}
         </div>
-        <div className="album-bar-text">
-          <strong>{meta ? meta.org_name : 'Capa'}</strong>
-          <small>{meta ? `${meta.kind === 'mosaic' ? 'Mosaico' : `Página ${meta.page_no}`} · ${meta.filled}/${meta.total}` : `${index.filled} de ${index.total} figurinhas`}</small>
-        </div>
+        <span className="album-bar-count" aria-label={`Página ${safeCurrent + 1} de ${lastIndex + 1}`}>{safeCurrent + 1} / {lastIndex + 1}</span>
         <div className="album-bar-side">
           {safeCurrent > 0 ? (
             <button className="round" aria-label="Página anterior" onClick={() => slideTo(safeCurrent - 1)}>‹</button>
@@ -515,7 +511,7 @@ export function AlbumPage({ albumId }: { albumId?: number }) {
           {trayCards.length ? (
             <>
               <div className="tray-head">
-                <p className="tray-label"><b>{trayCards.length}</b> para colar · toque para colar, deslize para ver mais</p>
+                <p className="tray-label"><b>{trayCards.length}</b> {trayCards.length === 1 ? 'figurinha' : 'figurinhas'} para colar</p>
                 {trayCards.length > 1 ? (
                   <button className="tray-all" disabled={!user?.verified} onClick={pasteAll}>Colar tudo</button>
                 ) : null}

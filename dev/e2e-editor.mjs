@@ -58,16 +58,17 @@ const ana = await open();
 await login(ana, 'ana@example.com');
 await ana.goto(`${BASE}/conta`);
 await ana.getByRole('link', { name: 'Editar meu capítulo' }).click();
-await ana.getByText('Álbum em andamento: dá para mudar textos').waitFor();
-if (await ana.getByRole('button', { name: 'Nova figurinha' }).isEnabled()) problems.push('criar figurinha deveria estar travado com o álbum em andamento');
+await ana.getByText('O álbum já começou').waitFor();
+if (await ana.getByRole('button', { name: '+ Figurinha' }).isEnabled()) problems.push('criar figurinha deveria estar travado com o álbum em andamento');
 await shot(ana, '30-editor');
 step('editora entra pelo papel; estrutura travada com o álbum em andamento');
 
+await ana.locator('.edit-head').click({ force: true });
+await ana.getByLabel(/^Título/).fill('Página reescrita');
 await ana.locator('.editor-sticker').first().click();
 const nome = `Editada ${Date.now().toString(36)}`;
 await ana.getByLabel('Nome', { exact: true }).fill(nome);
 await ana.getByLabel('Texto do verso').fill('Verso escrito pela editora.');
-await ana.getByLabel('Título da página').fill('Página reescrita');
 await ana.getByText(/Salvo às/).waitFor({ timeout: 8000 });
 step('autosave grava o rascunho sozinho');
 
@@ -84,18 +85,18 @@ const dataUrl = await ana.evaluate(() => {
   return c.toDataURL('image/png');
 });
 writeFileSync(png, Buffer.from(dataUrl.split(',')[1], 'base64'));
-await ana.getByLabel(/^Imagem de /).setInputFiles(png);
+await ana.locator('.pick input').first().setInputFiles(png);
 await ana.getByRole('dialog', { name: /Recortar/ }).waitFor();
 await shot(ana, '31-recorte');
 await ana.getByRole('button', { name: 'Usar este recorte' }).click();
 await ana.getByRole('dialog', { name: /Recortar/ }).waitFor({ state: 'detached' });
-await ana.locator('.editor-form .image-field img').waitFor();
+await ana.locator('.photo-frame img').waitFor();
 await ana.getByText(/Salvo às/).waitFor({ timeout: 8000 });
 await shot(ana, '32-editor-com-imagem');
 step('upload com recorte no cliente');
 
 // Link inválido é recusado pelo servidor, com aviso
-await ana.getByRole('button', { name: 'Adicionar link' }).click();
+await ana.getByRole('button', { name: '+ Adicionar link' }).click();
 await ana.getByLabel('Nome do link 1').fill('Golpe');
 await ana.getByLabel('Endereço do link 1').fill('javascript:alert(1)');
 await ana.getByText(/Não salvou/).waitFor({ timeout: 8000 });
@@ -135,8 +136,7 @@ step('publicação aplicada');
 const eu = await open();
 await login(eu, 'ana@example.com');
 await eu.goto(BASE);
-await eu.getByRole('button', { name: /Tubarões da Engenharia/ }).click();
-await eu.locator('.album-bar-text').getByText('Página 1').waitFor();
+await eu.locator('.cover-orgs button').filter({ hasText: /Tubarões da Engenharia/ }).click();
 await eu.getByRole('heading', { name: 'Página reescrita' }).first().waitFor();
 await shot(eu, '36-jogador');
 step('o jogador vê o título publicado');

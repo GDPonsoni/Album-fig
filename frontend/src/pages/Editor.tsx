@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { api, post, type AssetView, type ChapterContent, type ContentPage, type ContentSticker, type OrgView, type RarityView } from '../api';
-import { ContentPreview } from '../components/ContentPreview';
+import { MosaicPage, StickerPage } from '../components/AlbumPages';
 import { ImageCropper, type CropSpec } from '../components/ImageCropper';
 import { Message } from '../components/ui';
-import { gridSlots } from '../preview';
+import { contentToPages, gridSlots } from '../preview';
 
 type Row = Record<string, any>;
 interface Draft {
@@ -75,13 +75,23 @@ export function EditorHome() {
   );
 }
 
-function ImagePick({ label, url, disabled, onPick, onClear }: { label: string; url: string | null; disabled: boolean; onPick: (file: File) => void; onClear?: () => void }) {
+
+// Altura do cabeçalho da página, em % (o CSS usa o mesmo valor): figurinha não pode ficar por baixo dele.
+const HEAD_H = { portrait: 13.5, landscape: 19 };
+const sizeFor = (w: number, landscape: boolean): 'P' | 'M' | 'G' => {
+  const rel = landscape ? w / 0.72 : w;
+  return rel <= 24 ? 'P' : rel <= 34 ? 'M' : 'G';
+};
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const round1 = (value: number) => Math.round(value * 10) / 10;
+
+/** Botão grande de escolher imagem (o <input> fica escondido): serve para trocar fotos, fundo e mosaico. */
+function PickButton({ label, disabled, onPick, primary }: { label: string; disabled?: boolean; onPick: (file: File) => void; primary?: boolean }) {
   return (
-    <div className="image-field">
-      {url ? <img src={url} alt="" /> : null}
+    <label className={`btn pick${primary ? ' btn-primary' : ''}${disabled ? ' pick-disabled' : ''}`}>
+      {label}
       <input
         type="file"
-        aria-label={label}
         accept="image/png,image/webp,image/jpeg"
         disabled={disabled}
         onChange={(event) => {
@@ -90,9 +100,105 @@ function ImagePick({ label, url, disabled, onPick, onClear }: { label: string; u
           if (file) onPick(file);
         }}
       />
-      {url && onClear && !disabled ? <button type="button" className="link" onClick={onClear}>Tirar imagem</button> : null}
+    </label>
+  );
+}
+
+type Slot = { x: number; y: number; w: number; h: number };
+
+/** Camada por cima da página: arrastar move a figurinha, puxar o canto muda o tamanho, tocar no cabeçalho edita o texto. */
+function EditLayer({ stickers, selected, head, landscape, locked, onSelect, onSlot }: {
+  stickers: ContentSticker[];
+  selected: string | null;
+  head: boolean;
+  landscape: boolean;
+  locked: boolean;
+  onSelect: (key: string | null) => void;
+  onSlot: (key: string, slot: Slot, final: boolean) => void;
+}) {
+  const layer = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ key: string; mode: 'move' | 'resize'; x: number; y: number; slot: Slot } | null>(null);
+  const top = landscape ? HEAD_H.landscape : HEAD_H.portrait;
+
+  const down = (event: ReactPointerEvent, sticker: ContentSticker, mode: 'move' | 'resize') => {
+    event.stopPropagation();
+    onSelect(sticker.key);
+    if (locked) return;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    drag.current = { key: sticker.key, mode, x: event.clientX, y: event.clientY, slot: sticker.slot };
+  };
+  const move = (event: ReactPointerEvent) => {
+    const state = drag.current;
+    const box = layer.current?.getBoundingClientRect();
+    if (!state || !box) return;
+    const dx = ((event.clientX - state.x) / box.width) * 100;
+    const dy = ((event.clientY - state.y) / box.height) * 100;
+    const { slot } = state;
+    if (state.mode === 'move') {
+      let x = clamp(slot.x + dx, 0, 100 - slot.w);
+      const y = clamp(slot.y + dy, Math.min(top, 100 - slot.h), 100 - slot.h);
+      // Ímã: centraliza na página quando chega perto.
+      if (Math.abs(x + slot.w / 2 - 50) < 1.8) x = 50 - slot.w / 2;
+      onSlot(state.key, { ...slot, x: round1(x), y: round1(y) }, false);
+    } else {
+      // A figurinha mantém a proporção 3:4; a altura em % acompanha o formato da página.
+      const pageRatio = box.width / box.height;
+      const maxW = Math.min(100 - slot.x, ((100 - slot.y) * 3) / 4 / pageRatio);
+      const w = clamp(slot.w + dx, 8, maxW);
+      onSlot(state.key, { ...slot, w: round1(w), h: round1((w * pageRatio * 4) / 3) }, false);
+    }
+  };
+  const up = (event: ReactPointerEvent) => {
+    drag.current = null;
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+  };
+  const key = (event: React.KeyboardEvent, sticker: ContentSticker) => {
+    if (locked) return;
+    const step = event.shiftKey ? 2 : 0.5;
+    const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    const { slot } = sticker;
+    onSlot(sticker.key, { ...slot, x: round1(clamp(slot.x + delta[0], 0, 100 - slot.w)), y: round1(clamp(slot.y + delta[1], Math.min(top, 100 - slot.h), 100 - slot.h)) }, true);
+  };
+
+  return (
+    <div className="edit-layer" ref={layer} onPointerDown={() => onSelect(null)}>
+      <button type="button" className={`edit-head${head ? ' on' : ''}`} style={{ height: `${top}%` }} aria-label="Editar título e texto da página" onPointerDown={(e) => { e.stopPropagation(); onSelect('head'); }}>
+      </button>
+      {stickers.filter((s) => s.active).map((sticker) => (
+        <div
+          key={sticker.key}
+          className={`edit-box${sticker.key === selected ? ' on' : ''}`}
+          style={{ left: `${sticker.slot.x}%`, top: `${sticker.slot.y}%`, width: `${sticker.slot.w}%`, height: `${sticker.slot.h}%` }}
+          role="button"
+          tabIndex={0}
+          aria-label={`Mover ${sticker.name}`}
+          onPointerDown={(e) => down(e, sticker, 'move')}
+          onPointerMove={move}
+          onPointerUp={up}
+          onPointerCancel={up}
+          onKeyDown={(e) => key(e, sticker)}
+          onFocus={() => onSelect(sticker.key)}
+        >
+          {sticker.key === selected && !locked ? (
+            <i
+              className="edit-handle"
+              aria-label="Mudar o tamanho"
+              onPointerDown={(e) => down(e, sticker, 'resize')}
+              onPointerMove={move}
+              onPointerUp={up}
+              onPointerCancel={up}
+            />
+          ) : null}
+        </div>
+      ))}
     </div>
   );
+}
+
+function Counter({ value, max }: { value: string; max: number }) {
+  return <small className={value.length > max * 0.9 ? 'counter warn' : 'counter'}>{value.length}/{max}</small>;
 }
 
 export function EditorChapter() {
@@ -102,12 +208,14 @@ export function EditorChapter() {
   const [assets, setAssets] = useState<AssetView[]>([]);
   const [revision, setRevision] = useState<Row | null>(null);
   const [editable, setEditable] = useState(true);
+  const [tab, setTab] = useState<'pages' | 'mosaic' | 'format'>('pages');
   const [pageIndex, setPageIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [save, setSave] = useState<{ state: 'idle' | 'dirty' | 'saving' | 'saved' | 'error'; message?: string }>({ state: 'idle' });
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [cropping, setCropping] = useState<{ file: File; kind: 'sticker' | 'background' | 'mosaic'; apply: (asset: AssetView) => void } | null>(null);
+  const mosaicFile = useRef<File | null>(null);
   const base = `/editor/chapters/${chapterId}`;
 
   useEffect(() => {
@@ -183,6 +291,11 @@ export function EditorChapter() {
   }, []);
 
   const pages = useMemo(() => (content ? [...content.pages].sort((a, b) => a.page_no - b.page_no) : []), [content]);
+  const details = useMemo(
+    () => (content && draft ? contentToPages(content, draft.chapter.org, assets, draft.rarities) : []),
+    [content, draft, assets],
+  );
+
   if (error && !draft) {
     return <div className="screen"><h1 className="screen-title">Editor</h1><Message>{error}</Message><Link className="btn" to="/">Voltar ao álbum</Link></div>;
   }
@@ -194,13 +307,22 @@ export function EditorChapter() {
   const landscape = content.layout.orientation === 'landscape';
   const page = pages[Math.min(pageIndex, pages.length - 1)];
   const onPage = content.stickers.filter((sticker) => sticker.page_no === page.page_no);
-  const current = content.stickers.find((sticker) => sticker.key === selected) ?? null;
+  const current = selected && selected !== 'head' ? content.stickers.find((sticker) => sticker.key === selected) ?? null : null;
   const assetUrl = (id: number | null) => (id == null ? null : assets.find((asset) => asset.id === id)?.url ?? null);
+  const detail = details.find((d) => d.kind === 'stickers' && d.page_no === page.page_no);
+  const mosaicDetail = details.find((d) => d.kind === 'mosaic');
 
   const setPage = (changes: Partial<ContentPage>) =>
     change((c) => ({ ...c, pages: c.pages.map((p) => (p.page_no === page.page_no ? { ...p, ...changes } : p)) }));
   const setSticker = (key: string, changes: Partial<ContentSticker>) =>
     change((c) => ({ ...c, stickers: c.stickers.map((s) => (s.key === key ? { ...s, ...changes } : s)) }));
+  // Mexer na posição à mão tira a página de qualquer grade pronta.
+  const moveSticker = (key: string, slot: Slot) =>
+    change((c) => ({
+      ...c,
+      pages: c.pages.map((p) => (p.page_no === page.page_no && p.layout !== 'free' ? { ...p, layout: 'free' } : p)),
+      stickers: c.stickers.map((s) => (s.key === key ? { ...s, slot, size: sizeFor(slot.w, landscape) } : s)),
+    }));
 
   const applyGrid = (layout: string) => {
     const slots = gridSlots(layout, content.layout.orientation);
@@ -209,7 +331,11 @@ export function EditorChapter() {
       return {
         ...c,
         pages: c.pages.map((p) => (p.page_no === page.page_no ? { ...p, layout } : p)),
-        stickers: c.stickers.map((s) => (s.page_no === page.page_no && next < slots.length ? { ...s, slot: slots[next++] } : s)),
+        stickers: c.stickers.map((s) => {
+          if (s.page_no !== page.page_no || next >= slots.length) return s;
+          const slot = slots[next++];
+          return { ...s, slot, size: sizeFor(slot.w, landscape) };
+        }),
       };
     });
   };
@@ -217,15 +343,18 @@ export function EditorChapter() {
     const number = Math.max(0, ...content.pages.map((p) => p.page_no)) + 1;
     change((c) => ({ ...c, pages: [...c.pages, { page_no: number, title: '', text: '', background_asset_id: null, layout: 'free' }] }));
     setPageIndex(pages.length);
+    setSelected('head');
   };
   const removePage = () => {
     change((c) => ({ ...c, pages: c.pages.filter((p) => p.page_no !== page.page_no) }));
     setPageIndex(Math.max(0, pageIndex - 1));
+    setSelected(null);
   };
   const addSticker = () => {
     const key = crypto.randomUUID();
     const slots = gridSlots(page.layout, content.layout.orientation);
-    const slot = slots[onPage.length] ?? slotFor('P', landscape, 5 + (onPage.length % 4) * 23, 20 + Math.floor(onPage.length / 4) * 24);
+    const top = landscape ? HEAD_H.landscape : HEAD_H.portrait;
+    const slot = slots[onPage.length] ?? slotFor('P', landscape, 5 + (onPage.length % 4) * 23, top + 4 + Math.floor(onPage.length / 4) * 24);
     change((c) => ({
       ...c,
       stickers: [...c.stickers, {
@@ -275,11 +404,31 @@ export function EditorChapter() {
 
   const saveLabel = {
     idle: revision ? 'Tudo salvo' : 'Nada alterado ainda',
-    dirty: 'Alterações por salvar…',
+    dirty: 'Salvando em instantes…',
     saving: 'Salvando…',
     saved: `Salvo às ${save.message}`,
     error: `Não salvou: ${save.message}`,
   }[save.state];
+
+  const mosaic = content.mosaic;
+  const pickMosaic = (file: File) => {
+    mosaicFile.current = file;
+    setCropping({ file, kind: 'mosaic', apply: (asset) => change((c) => ({ ...c, mosaic: { cols: c.mosaic?.cols ?? 2, rows: c.mosaic?.rows ?? 3, asset_id: asset.id } })) });
+  };
+  const repositionMosaic = async () => {
+    try {
+      let file = mosaicFile.current;
+      if (!file) {
+        const url = assetUrl(mosaic?.asset_id ?? null);
+        if (!url) return;
+        const blob = await (await fetch(url)).blob();
+        file = new File([blob], 'mosaico.jpg', { type: blob.type });
+      }
+      pickMosaic(file);
+    } catch {
+      setError('Não foi possível abrir a imagem. Escolha o arquivo de novo.');
+    }
+  };
 
   return (
     <div className="editor">
@@ -287,119 +436,87 @@ export function EditorChapter() {
         <ImageCropper file={cropping.file} spec={crop(cropping.kind, landscape)} onDone={uploadCropped} onCancel={() => setCropping(null)} />
       ) : null}
       <header className="editor-top">
+        <Link to="/conta" className="editor-back">← Sair do editor</Link>
         <div>
-          <p className="album-kicker">Editor · {chapter.album.title}</p>
+          <p className="album-kicker">{chapter.album.title}</p>
           <h1>{chapter.org.name}</h1>
         </div>
-        <Link to="/">Voltar ao álbum</Link>
       </header>
 
-      <section className="panel paper editor-status" aria-label="Estado da revisão">
-        <p>
-          <b>{revision ? STATUS[revision.status] ?? revision.status : 'Sem rascunho: você está vendo o que está publicado'}</b>
-          <small className={`save-state save-${save.state}`} role="status"> · {saveLabel}</small>
-        </p>
-        {revision?.review_note ? <p className="review-note"><b>Nota da revisão:</b> {revision.review_note}</p> : null}
-        {chapter.closed ? <p className="muted">Álbum encerrado: o capítulo não pode mais mudar.</p> : null}
-        {frozen && !chapter.closed ? <p className="muted">Álbum em andamento: dá para mudar textos, imagens e posições. Não dá para criar, remover ou desativar figurinhas, nem refazer a grade do mosaico.</p> : null}
-        <Message>{error}</Message>
-        {note ? <Message kind="ok">{note}</Message> : null}
-        <div className="admin-actions">
-          <button className="btn btn-primary" disabled={locked || save.state === 'saving' || (!revision && save.state === 'idle')} onClick={submit}>Enviar para revisão</button>
-          {save.state === 'error' ? <button className="btn" onClick={persist}>Tentar salvar de novo</button> : null}
-        </div>
-      </section>
+      {revision?.review_note ? <p className="review-note"><b>Nota da revisão:</b> {revision.review_note}</p> : null}
+      {chapter.closed ? <p className="notice">Álbum encerrado: o capítulo não pode mais mudar.</p> : null}
+      {frozen && !chapter.closed ? <p className="notice">O álbum já começou: você pode mudar textos, imagens e posições, mas não criar nem remover figurinhas.</p> : null}
+      {locked && !chapter.closed ? <p className="notice">{revision ? STATUS[revision.status] : 'Somente leitura'}.</p> : null}
+      <Message>{error}</Message>
+      {note ? <Message kind="ok">{note}</Message> : null}
 
-      <div className="editor-body">
-        <div className="editor-forms">
-          <section className="panel paper">
-            <h2>Formato do capítulo</h2>
-            <div className="segmented" role="group" aria-label="Orientação das páginas">
-              {(['portrait', 'landscape'] as const).map((value) => (
-                <button key={value} type="button" disabled={locked} className={content.layout.orientation === value ? 'active' : ''} onClick={() => change((c) => ({ ...c, layout: { orientation: value } }))}>
-                  {value === 'portrait' ? 'Em pé' : 'Deitado'}
-                </button>
-              ))}
-            </div>
-          </section>
+      <div className="segmented editor-tabs" role="tablist" aria-label="Seções do editor">
+        {([['pages', 'Páginas'], ['mosaic', 'Mosaico'], ['format', 'Formato']] as const).map(([value, label]) => (
+          <button key={value} type="button" role="tab" aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{label}</button>
+        ))}
+      </div>
 
-          <section className="panel paper">
-            <div className="admin-head">
-              <h2>Páginas</h2>
-              <button type="button" className="btn" disabled={locked || pages.length >= 30} onClick={addPage}>Nova página</button>
-            </div>
-            <nav className="admin-tabs" aria-label="Páginas do capítulo">
+      {tab === 'pages' ? (
+        <div className="editor-body">
+          <div className="editor-canvas">
+            <nav className="page-chips" aria-label="Páginas do capítulo">
               {pages.map((p, index) => (
-                <button key={p.page_no} type="button" className={p.page_no === page.page_no ? 'active' : ''} onClick={() => { setPageIndex(index); setSelected(null); }}>Página {p.page_no}</button>
+                <button key={p.page_no} type="button" className={p.page_no === page.page_no ? 'active' : ''} onClick={() => { setPageIndex(index); setSelected(null); }}>{p.page_no}</button>
               ))}
+              <button type="button" className="chip-add" disabled={locked || pages.length >= 30} onClick={addPage} aria-label="Nova página">+</button>
             </nav>
-            <label className="field"><span>Título da página</span>
-              <input maxLength={80} disabled={locked} placeholder={chapter.org.name} value={page.title} onChange={(e) => setPage({ title: e.target.value })} />
-            </label>
-            <label className="field"><span>Texto</span>
-              <textarea rows={2} maxLength={600} disabled={locked} value={page.text} onChange={(e) => setPage({ text: e.target.value })} />
-            </label>
-            <label className="field"><span>Layout</span>
-              <select disabled={locked} value={page.layout} onChange={(e) => (e.target.value === 'free' ? setPage({ layout: 'free' }) : applyGrid(e.target.value))}>
-                {LAYOUTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-              <small>Escolher uma grade reposiciona as figurinhas desta página.</small>
-            </label>
-            <div className="field"><span>Fundo da página</span>
-              <ImagePick
-                label="Fundo da página"
-                url={assetUrl(page.background_asset_id)}
-                disabled={locked}
-                onPick={(file) => setCropping({ file, kind: 'background', apply: (asset) => setPage({ background_asset_id: asset.id }) })}
-                onClear={() => setPage({ background_asset_id: null })}
-              />
+            <div className={`preview-stage edit-stage${landscape ? ' landscape' : ''}`}>
+              {detail ? (
+                <StickerPage
+                  detail={detail}
+                  onOpen={() => {}}
+                  lastPasted={null}
+                  overlay={<EditLayer stickers={onPage} selected={selected} head={selected === 'head'} landscape={landscape} locked={locked} onSelect={setSelected} onSlot={(key, slot) => moveSticker(key, slot)} />}
+                />
+              ) : null}
             </div>
-            {pages.length > 1 && !onPage.length ? <button type="button" className="link danger" disabled={locked} onClick={removePage}>Remover esta página</button> : null}
-          </section>
+            <p className="muted edit-tip">Arraste uma figurinha para mover. Puxe o canto dela para mudar o tamanho. Toque no topo para editar o texto da página.</p>
+          </div>
 
-          <section className="panel paper">
+          <div className="editor-inspector">
             <div className="admin-head">
-              <h2>Figurinhas da página {page.page_no} ({onPage.length})</h2>
-              <button type="button" className="btn" disabled={locked || frozen || content.stickers.length >= 200} onClick={addSticker}>Nova figurinha</button>
+              <h2>Figurinhas desta página ({onPage.length})</h2>
+              <button type="button" className="btn" disabled={locked || frozen || content.stickers.length >= 200} onClick={addSticker}>+ Figurinha</button>
             </div>
-            <ul className="editor-stickers">
-              {onPage.map((sticker) => (
-                <li key={sticker.key}>
-                  <button type="button" className={`editor-sticker${sticker.key === selected ? ' active' : ''}${sticker.active ? '' : ' inactive'}`} onClick={() => setSelected(sticker.key === selected ? null : sticker.key)}>
-                    {assetUrl(sticker.asset_id) ? <img src={assetUrl(sticker.asset_id)!} alt="" /> : <i />}
-                    <span>{sticker.name}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {onPage.length ? null : <p className="muted">Nenhuma figurinha nesta página.</p>}
+            {onPage.length ? (
+              <ul className="editor-stickers">
+                {onPage.map((sticker) => (
+                  <li key={sticker.key}>
+                    <button type="button" className={`editor-sticker${sticker.key === selected ? ' active' : ''}${sticker.active ? '' : ' inactive'}`} onClick={() => setSelected(sticker.key === selected ? null : sticker.key)}>
+                      {assetUrl(sticker.asset_id) ? <img src={assetUrl(sticker.asset_id)!} alt="" /> : <i />}
+                      <span>{sticker.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="muted">Nenhuma figurinha nesta página.</p>}
+
             {current ? (
-              <div className="editor-form" aria-label={`Editar ${current.name}`}>
+              <section className="panel paper inspector" aria-label={`Editar ${current.name}`}>
+                <div className="inspector-photo">
+                  <div className="photo-frame">{assetUrl(current.asset_id) ? <img src={assetUrl(current.asset_id)!} alt="" /> : <span>Sem imagem</span>}</div>
+                  <div className="photo-actions">
+                    <PickButton primary label={current.asset_id ? 'Trocar imagem' : 'Escolher imagem'} disabled={locked}
+                      onPick={(file) => setCropping({ file, kind: 'sticker', apply: (asset) => setSticker(current.key, { asset_id: asset.id }) })} />
+                    {current.asset_id && !locked ? <button type="button" className="link" onClick={() => setSticker(current.key, { asset_id: null })}>Tirar imagem</button> : null}
+                    <small className="muted">Foto na proporção 3:4. Você escolhe o enquadramento depois.</small>
+                  </div>
+                </div>
                 <label className="field"><span>Nome</span>
                   <input maxLength={120} disabled={locked} value={current.name} onChange={(e) => setSticker(current.key, { name: e.target.value })} />
                 </label>
-                <div className="field"><span>Imagem (proporção 3:4)</span>
-                  <ImagePick
-                    label={`Imagem de ${current.name}`}
-                    url={assetUrl(current.asset_id)}
-                    disabled={locked}
-                    onPick={(file) => setCropping({ file, kind: 'sticker', apply: (asset) => setSticker(current.key, { asset_id: asset.id }) })}
-                    onClear={() => setSticker(current.key, { asset_id: null })}
-                  />
-                </div>
-                <label className="field"><span>Categoria</span>
-                  <input maxLength={40} disabled={locked} value={current.tag} onChange={(e) => setSticker(current.key, { tag: e.target.value })} />
+                <label className="field"><span>Texto do verso <Counter value={current.back_text} max={2000} /></span>
+                  <textarea rows={4} maxLength={2000} disabled={locked} placeholder="O que o jogador lê quando vira a figurinha" value={current.back_text} onChange={(e) => setSticker(current.key, { back_text: e.target.value })} />
                 </label>
-                <label className="field"><span>Dica no espaço vazio</span>
-                  <input maxLength={160} disabled={locked} value={current.hint} onChange={(e) => setSticker(current.key, { hint: e.target.value })} />
-                </label>
-                <label className="field"><span>Texto do verso</span>
-                  <textarea rows={3} maxLength={2000} disabled={locked} value={current.back_text} onChange={(e) => setSticker(current.key, { back_text: e.target.value })} />
-                </label>
-                <div className="field"><span>Links do verso (só https)</span>
+                <div className="field"><span>Links no verso</span>
                   {current.back_links.map((link, index) => (
                     <div key={index} className="link-row">
-                      <input aria-label={`Nome do link ${index + 1}`} placeholder="Instagram" maxLength={40} disabled={locked} value={link.label}
+                      <input aria-label={`Nome do link ${index + 1}`} placeholder="Nome (ex.: Instagram)" maxLength={40} disabled={locked} value={link.label}
                         onChange={(e) => setSticker(current.key, { back_links: current.back_links.map((l, i) => (i === index ? { ...l, label: e.target.value } : l)) })} />
                       <input aria-label={`Endereço do link ${index + 1}`} type="url" placeholder="https://…" maxLength={300} disabled={locked} value={link.url}
                         onChange={(e) => setSticker(current.key, { back_links: current.back_links.map((l, i) => (i === index ? { ...l, url: e.target.value } : l)) })} />
@@ -407,73 +524,119 @@ export function EditorChapter() {
                     </div>
                   ))}
                   {current.back_links.length < MAX_LINKS ? (
-                    <button type="button" className="link" disabled={locked} onClick={() => setSticker(current.key, { back_links: [...current.back_links, { label: '', url: 'https://' }] })}>Adicionar link</button>
+                    <button type="button" className="link" disabled={locked} onClick={() => setSticker(current.key, { back_links: [...current.back_links, { label: '', url: 'https://' }] })}>+ Adicionar link</button>
                   ) : null}
                 </div>
-                <label className="field"><span>Página</span>
-                  <select disabled={locked} value={current.page_no} onChange={(e) => setSticker(current.key, { page_no: Number(e.target.value) })}>
-                    {pages.map((p) => <option key={p.page_no} value={p.page_no}>Página {p.page_no}</option>)}
-                  </select>
+                <details className="more">
+                  <summary>Mais opções</summary>
+                  <label className="field"><span>Categoria</span>
+                    <input maxLength={40} disabled={locked} value={current.tag} onChange={(e) => setSticker(current.key, { tag: e.target.value })} />
+                  </label>
+                  <label className="field"><span>Dica no espaço vazio</span>
+                    <input maxLength={160} disabled={locked} value={current.hint} placeholder="Ajuda o jogador a achar esta figurinha" onChange={(e) => setSticker(current.key, { hint: e.target.value })} />
+                  </label>
+                  <label className="field"><span>Página</span>
+                    <select disabled={locked} value={current.page_no} onChange={(e) => setSticker(current.key, { page_no: Number(e.target.value) })}>
+                      {pages.map((p) => <option key={p.page_no} value={p.page_no}>Página {p.page_no}</option>)}
+                    </select>
+                  </label>
+                  <label className="field"><span>Raridade sugerida</span>
+                    <select disabled={locked || frozen} value={current.suggested_rarity_id ?? ''} onChange={(e) => setSticker(current.key, { suggested_rarity_id: e.target.value ? Number(e.target.value) : null })}>
+                      <option value="">Sem sugestão</option>
+                      {rarities.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </select>
+                    <small>É só uma sugestão: quem publica decide a raridade e o número.</small>
+                  </label>
+                  <label className="field check"><input type="checkbox" disabled={locked || frozen} checked={current.active} onChange={(e) => setSticker(current.key, { active: e.target.checked })} /> <span>Aparece na página e nos pacotes</span></label>
+                  {!frozen ? <button type="button" className="link danger" disabled={locked} onClick={() => removeSticker(current.key)}>Remover figurinha</button> : null}
+                </details>
+              </section>
+            ) : (
+              <section className="panel paper inspector" aria-label="Editar página">
+                <h2>Página {page.page_no}</h2>
+                <label className="field"><span>Título <Counter value={page.title} max={80} /></span>
+                  <input maxLength={80} disabled={locked} placeholder={chapter.org.name} value={page.title} onChange={(e) => setPage({ title: e.target.value })} />
                 </label>
-                <label className="field"><span>Tamanho</span>
-                  <select disabled={locked} value={current.size} onChange={(e) => {
-                    const size = e.target.value as 'P' | 'M' | 'G';
-                    setSticker(current.key, { size, slot: slotFor(size, landscape, current.slot.x, current.slot.y) });
-                  }}>
-                    <option value="P">Pequena</option><option value="M">Média</option><option value="G">Grande</option>
-                  </select>
+                <label className="field"><span>Texto <Counter value={page.text} max={600} /></span>
+                  <textarea rows={3} maxLength={600} disabled={locked} placeholder="Aparece embaixo do título. Textos longos são cortados na página." value={page.text} onChange={(e) => setPage({ text: e.target.value })} />
                 </label>
-                <div className="field"><span>Posição na página (%)</span>
-                  <div className="slot-row">
-                    {(['x', 'y', 'w', 'h'] as const).map((axis) => (
-                      <label key={axis} className="inline-field">{{ x: 'Esquerda', y: 'Topo', w: 'Largura', h: 'Altura' }[axis]}
-                        <input type="number" min={axis === 'w' || axis === 'h' ? 1 : 0} max={100} step="0.5" disabled={locked} value={current.slot[axis]}
-                          onChange={(e) => setSticker(current.key, { slot: { ...current.slot, [axis]: Number(e.target.value) } })} />
-                      </label>
-                    ))}
+                <div className="field"><span>Fundo da página</span>
+                  <div className="bg-row">
+                    <div className={`bg-thumb${landscape ? ' landscape' : ''}`} style={assetUrl(page.background_asset_id) ? { backgroundImage: `url(${JSON.stringify(assetUrl(page.background_asset_id))})` } : undefined} />
+                    <div className="photo-actions">
+                      <PickButton label={page.background_asset_id ? 'Trocar fundo' : 'Escolher fundo'} disabled={locked}
+                        onPick={(file) => setCropping({ file, kind: 'background', apply: (asset) => setPage({ background_asset_id: asset.id }) })} />
+                      {page.background_asset_id && !locked ? <button type="button" className="link" onClick={() => setPage({ background_asset_id: null })}>Voltar ao fundo padrão</button> : null}
+                    </div>
                   </div>
                 </div>
-                <label className="field"><span>Raridade sugerida</span>
-                  <select disabled={locked || frozen} value={current.suggested_rarity_id ?? ''} onChange={(e) => setSticker(current.key, { suggested_rarity_id: e.target.value ? Number(e.target.value) : null })}>
-                    <option value="">Sem sugestão</option>
-                    {rarities.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                <label className="field"><span>Arrumar figurinhas em grade</span>
+                  <select disabled={locked || !onPage.length} value="" onChange={(e) => e.target.value && applyGrid(e.target.value)}>
+                    <option value="">{page.layout === 'free' ? 'Posição livre (arrastando)' : `Grade ${page.layout.replace('grid-', '')}`}</option>
+                    {LAYOUTS.filter(([value]) => value !== 'free').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
-                  <small>É só uma sugestão: quem publica decide a raridade e o número.</small>
+                  <small>Alinha tudo de uma vez. Depois você ainda pode arrastar cada uma.</small>
                 </label>
-                <label className="field check"><input type="checkbox" disabled={locked || frozen} checked={current.active} onChange={(e) => setSticker(current.key, { active: e.target.checked })} /> <span>Ativa (entra nos pacotes)</span></label>
-                {!frozen ? <button type="button" className="link danger" disabled={locked} onClick={() => removeSticker(current.key)}>Remover figurinha</button> : null}
-              </div>
-            ) : null}
-          </section>
-
-          <section className="panel paper">
-            <h2>Mosaico</h2>
-            <p className="muted">Uma imagem cortada em peças, que os jogadores juntam. Sem imagem, o capítulo não tem mosaico.</p>
-            <ImagePick
-              label="Imagem do mosaico"
-              url={assetUrl(content.mosaic?.asset_id ?? null)}
-              disabled={locked || (frozen && content.mosaic?.asset_id == null)}
-              onPick={(file) => setCropping({ file, kind: 'mosaic', apply: (asset) => change((c) => ({ ...c, mosaic: { cols: c.mosaic?.cols ?? 2, rows: c.mosaic?.rows ?? 3, asset_id: asset.id } })) })}
-              onClear={frozen ? undefined : () => change((c) => ({ ...c, mosaic: null }))}
-            />
-            {content.mosaic ? (
-              <div className="slot-row">
-                <label className="inline-field">Colunas
-                  <input type="number" min={1} max={10} disabled={locked || frozen} value={content.mosaic.cols} onChange={(e) => change((c) => ({ ...c, mosaic: { ...c.mosaic!, cols: Number(e.target.value) || 1 } }))} />
-                </label>
-                <label className="inline-field">Linhas
-                  <input type="number" min={1} max={10} disabled={locked || frozen} value={content.mosaic.rows} onChange={(e) => change((c) => ({ ...c, mosaic: { ...c.mosaic!, rows: Number(e.target.value) || 1 } }))} />
-                </label>
-              </div>
-            ) : null}
-          </section>
+                {pages.length > 1 && !onPage.length ? <button type="button" className="link danger" disabled={locked} onClick={removePage}>Remover esta página</button> : null}
+              </section>
+            )}
+          </div>
         </div>
+      ) : null}
 
-        <aside className="editor-preview">
-          <ContentPreview label="Prévia ao vivo" content={content} org={chapter.org} assets={assets} rarities={rarities} page={Math.min(pageIndex, pages.length - 1)} onPage={(index) => index < pages.length && setPageIndex(index)} />
-          <p className="muted">É assim que o jogador vê a página com as figurinhas coladas. Sem imagem, aparece o espaço vazio com a dica.</p>
-        </aside>
-      </div>
+      {tab === 'mosaic' ? (
+        <div className="editor-body">
+          <div className="editor-canvas">
+            <div className={`preview-stage edit-stage`}>
+              {mosaicDetail ? <MosaicPage detail={mosaicDetail} onOpen={() => {}} lastPasted={null} /> : <p className="empty-mosaic">Nenhuma imagem de mosaico ainda.</p>}
+            </div>
+          </div>
+          <div className="editor-inspector">
+            <section className="panel paper inspector">
+              <h2>Mosaico</h2>
+              <p className="muted">Uma imagem grande cortada em peças. Cada peça vira uma figurinha que os jogadores juntam para formar a imagem.</p>
+              <div className="photo-actions row">
+                <PickButton primary label={mosaic?.asset_id ? 'Trocar imagem' : 'Escolher imagem'} disabled={locked || (frozen && mosaic?.asset_id == null)} onPick={pickMosaic} />
+                {mosaic?.asset_id ? <button type="button" className="btn" disabled={locked} onClick={repositionMosaic}>Reposicionar</button> : null}
+              </div>
+              {mosaic?.asset_id && !frozen && !locked ? <button type="button" className="link danger" onClick={() => change((c) => ({ ...c, mosaic: null }))}>Remover mosaico</button> : null}
+              {mosaic ? (
+                <div className="steppers">
+                  {([['cols', 'Colunas'], ['rows', 'Linhas']] as const).map(([axis, label]) => (
+                    <div key={axis} className="stepper">
+                      <span>{label}</span>
+                      <button type="button" aria-label={`Menos ${label.toLowerCase()}`} disabled={locked || frozen || mosaic[axis] <= 1} onClick={() => change((c) => ({ ...c, mosaic: { ...c.mosaic!, [axis]: c.mosaic![axis] - 1 } }))}>−</button>
+                      <b>{mosaic[axis]}</b>
+                      <button type="button" aria-label={`Mais ${label.toLowerCase()}`} disabled={locked || frozen || mosaic[axis] >= 10} onClick={() => change((c) => ({ ...c, mosaic: { ...c.mosaic!, [axis]: c.mosaic![axis] + 1 } }))}>+</button>
+                    </div>
+                  ))}
+                  <p className="muted">{mosaic.cols * mosaic.rows} peças no total.{frozen ? ' O álbum já começou: a grade não pode mudar.' : ''}</p>
+                </div>
+              ) : null}
+            </section>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === 'format' ? (
+        <section className="panel paper inspector">
+          <h2>Formato das páginas</h2>
+          <div className="segmented" role="group" aria-label="Orientação das páginas">
+            {(['portrait', 'landscape'] as const).map((value) => (
+              <button key={value} type="button" disabled={locked} className={content.layout.orientation === value ? 'active' : ''} onClick={() => change((c) => ({ ...c, layout: { orientation: value } }))}>
+                {value === 'portrait' ? 'Em pé' : 'Deitado'}
+              </button>
+            ))}
+          </div>
+          <p className="muted">Vale para todas as páginas do capítulo. Ao mudar, confira a posição das figurinhas.</p>
+        </section>
+      ) : null}
+
+      <footer className="editor-bar">
+        <span className={`save-state save-${save.state}`} role="status">{saveLabel}</span>
+        {save.state === 'error' ? <button className="btn" onClick={persist}>Tentar de novo</button> : null}
+        <button className="btn btn-primary" disabled={locked || save.state === 'saving' || (!revision && save.state === 'idle')} onClick={submit}>Enviar para revisão</button>
+      </footer>
     </div>
   );
 }

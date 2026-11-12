@@ -29,13 +29,17 @@ function EmptySlot({ slot }: { slot: Slot }) {
   );
 }
 
-export function StickerPage({ detail, onOpen, lastPasted }: { detail: PageDetail; onOpen: (slot: Slot) => void; lastPasted: number | null }) {
+/** Título longo encolhe em vez de estourar o cabeçalho (que tem altura fixa para não cobrir as figurinhas). */
+const titleScale = (title: string) => (title.length > 28 ? 0.6 : title.length > 16 ? 0.78 : 1);
+
+export function StickerPage({ detail, onOpen, lastPasted, overlay }: { detail: PageDetail; onOpen: (slot: Slot) => void; lastPasted: number | null; overlay?: React.ReactNode }) {
+  const title = detail.page?.title || detail.org.name;
   return (
-    <article className={pageClass(detail)} style={pageStyle(detail)}>
+    <article className={pageClass(detail)} style={{ ...pageStyle(detail), '--ts': titleScale(title) } as React.CSSProperties}>
       <header className="page-head">
         {detail.org.logo_url ? <img src={detail.org.logo_url} alt="" /> : null}
         <div>
-          <h2>{detail.page?.title || detail.org.name}</h2>
+          <h2>{title}</h2>
           {detail.page?.text ? <p>{detail.page.text}</p> : detail.page_no === 1 ? <p>{detail.org.description}</p> : null}
         </div>
       </header>
@@ -52,6 +56,7 @@ export function StickerPage({ detail, onOpen, lastPasted }: { detail: PageDetail
           {slot.filled ? <StickerArt card={slot.card!} /> : <EmptySlot slot={slot} />}
         </button>
       ))}
+      {overlay}
     </article>
   );
 }

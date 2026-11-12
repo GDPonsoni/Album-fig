@@ -224,7 +224,7 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
     <>
       <section className="ready-head">
         <h2>{count ? `${count} ${count === 1 ? 'pacote pronto' : 'pacotes prontos'}` : 'Nenhum pacote pronto'}</h2>
-        <p>{count ? 'Toque em um pacote para abrir.' : 'O próximo já está a caminho.'}</p>
+        {count ? <p>Toque em um pacote para abrir.</p> : null}
       </section>
       <section className="drawer" aria-label="Gaveta de pacotes">
         <ul className="drawer-slots">
@@ -246,13 +246,7 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
             </li>
           ))}
         </ul>
-        <p className="drawer-note">
-          {empty === 0
-            ? 'Gaveta cheia. A contagem do próximo pacote só começa quando você abrir um.'
-            : empty > 1
-              ? 'Cada pacote entregue já começa a contagem do próximo.'
-              : 'Quando este chegar, a gaveta fica cheia.'}
-        </p>
+        {empty === 0 ? <p className="drawer-note">Gaveta cheia. A contagem do próximo pacote só começa quando você abrir um.</p> : null}
       </section>
       {extras.length ? (
         <section>
