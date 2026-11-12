@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, post, type AssetView, type ChapterContent, type OrgView, type RarityView } from '../api';
 import { ContentPreview } from '../components/ContentPreview';
@@ -13,9 +13,9 @@ const STATUS: Record<string, string> = {
 };
 const ALBUM: Record<string, string> = { draft: 'rascunho', scheduled: 'agendado', active: 'em andamento', ended: 'encerrado' };
 const FIELD: Record<string, string> = {
-  name: 'Nome', size: 'Tamanho', tag: 'Categoria', hint: 'Dica', back_text: 'Verso', back_links: 'Links', page_no: 'Página',
-  slot: 'Posição', active: 'Ativa', suggested_rarity_id: 'Raridade sugerida', image: 'Imagem', title: 'Título', text: 'Texto',
-  layout: 'Layout', background: 'Fundo', description: 'Descrição', color: 'Cor',
+  name: 'Nome', tag: 'Categoria', back_text: 'Verso', back_links: 'Links', page_no: 'Página',
+  slot: 'Posição e giro', active: 'Ativa', suggested_rarity_id: 'Raridade sugerida', image: 'Imagem', title: 'Título', text: 'Texto',
+  layout: 'Arrumação', background: 'Fundo', description: 'Descrição', color: 'Cor', hint: 'Dica', size: 'Tamanho',
 };
 const ACTION: Record<string, string> = {
   'role.grant': 'Papel concedido', 'role.revoke': 'Papel revogado', 'revision.submit': 'Revisão enviada', 'revision.edit': 'Rascunho editado', 'promo.codes_create': 'Códigos gerados', 'revision.withdraw': 'Envio retirado',
@@ -24,9 +24,34 @@ const ACTION: Record<string, string> = {
   'admin.chapter_create': 'Capítulo criado',
 };
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
-const show = (value: unknown) => (value === null || value === undefined || value === '' ? '(vazio)' : typeof value === 'object' ? JSON.stringify(value) : String(value));
+const SIZES: Record<string, string> = { P: 'Pequena', M: 'Média', G: 'Grande' };
+const RaritiesContext = createContext<RarityView[]>([]);
+
+/** Valor de um campo do diff em linguagem de gente, não JSON. */
+function show(field: string, value: any, rarities: RarityView[]): string {
+  if (value === null || value === undefined || value === '') return '(vazio)';
+  switch (field) {
+    case 'slot':
+      return `posição ${value.x}% · ${value.y}%, tamanho ${value.w}% × ${value.h}%${value.rot ? `, girada ${value.rot}°` : ''}`;
+    case 'size':
+      return SIZES[value] ?? String(value);
+    case 'active':
+      return value ? 'Sim' : 'Não';
+    case 'suggested_rarity_id':
+      return rarities.find((r) => r.id === value)?.name ?? `raridade ${value}`;
+    case 'back_links':
+      return Array.isArray(value) && value.length ? value.map((l: { label: string; url: string }) => `${l.label} (${l.url})`).join(', ') : '(nenhum)';
+    case 'layout':
+      return value === 'free' ? 'Livre' : String(value).startsWith('grid-') ? `Grade ${String(value).slice(5)}` : String(value);
+    case 'page_no':
+      return `Página ${value}`;
+    default:
+      return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  }
+}
 
 function Change({ label, change }: { label: string; change: { old: any; new: any } }) {
+  const rarities = useContext(RaritiesContext);
   const image = label === 'image' || label === 'background';
   return (
     <li className="diff-field">
@@ -38,7 +63,7 @@ function Change({ label, change }: { label: string; change: { old: any; new: any
           {change.new ? <img src={change.new} alt="Depois" /> : <i>sem imagem</i>}
         </span>
       ) : (
-        <span><del>{show(change.old)}</del> <ins>{show(change.new)}</ins></span>
+        <span className="diff-text"><del>{show(label, change.old, rarities)}</del> <ins>{show(label, change.new, rarities)}</ins></span>
       )}
     </li>
   );
@@ -55,7 +80,7 @@ function Diff({ diff }: { diff: Row }) {
           <ul>{Object.entries(diff.org).map(([field, change]) => <Change key={field} label={field === 'logo' ? 'image' : field} change={change as { old: any; new: any }} />)}</ul>
         </div>
       ) : null}
-      {diff.orientation ? <p><b>Orientação:</b> <del>{diff.orientation.old}</del> <ins>{diff.orientation.new}</ins></p> : null}
+      {diff.orientation ? <p><b>Formato das páginas:</b> <del>{diff.orientation.old === 'landscape' ? 'Deitado' : 'Em pé'}</del> <ins>{diff.orientation.new === 'landscape' ? 'Deitado' : 'Em pé'}</ins></p> : null}
       {diff.added.length ? (
         <div>
           <h4>Figurinhas novas ({diff.added.length})</h4>
@@ -124,6 +149,9 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
   const [error, setError] = useState<Error | null>(null);
   const [ok, setOk] = useState('');
   const { run, prompt } = useMfa();
+  const [previewPage, setPreviewPage] = useState(0);
+  const [side, setSide] = useState<'before' | 'after'>('after');
+  const [rejecting, setRejecting] = useState(false);
 
   const load = useCallback(async () => {
     const detail = await api<Row>(`/admin/revisions/${id}`);
@@ -171,12 +199,12 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
 
   const diff = data.diff as Row;
   const counts: [string, number][] = [
-    ['figurinhas novas', diff.added.length],
-    ['alteradas', diff.changed.length],
-    ['removidas', diff.removed.length],
-    ['páginas', diff.pages.length],
-    ['mosaico', diff.mosaic ? 1 : 0],
-    ['peças do mosaico', diff.mosaic_pieces?.length ?? 0],
+    [diff.added.length === 1 ? 'figurinha nova' : 'figurinhas novas', diff.added.length],
+    [diff.changed.length === 1 ? 'figurinha alterada' : 'figurinhas alteradas', diff.changed.length],
+    [diff.removed.length === 1 ? 'figurinha removida' : 'figurinhas removidas', diff.removed.length],
+    [diff.pages.length === 1 ? 'página mudou' : 'páginas mudaram', diff.pages.length],
+    ['mosaico mudou', diff.mosaic ? 1 : 0],
+    [(diff.mosaic_pieces?.length ?? 0) === 1 ? 'peça do mosaico' : 'peças do mosaico', diff.mosaic_pieces?.length ?? 0],
     ['identidade da org', diff.org ? 1 : 0],
   ];
   const steps = [['submitted', 'Enviada'], ['approved', 'Aprovada'], ['published', 'Publicada']] as const;
@@ -194,9 +222,10 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
   return (
     <section className="review-detail">
       {prompt}
-      <div className="admin-head">
-        <h2>{data.org_name} · revisão {data.number}</h2>
-        <button className="btn" onClick={onClose}>Fechar</button>
+      <button type="button" className="back-link" onClick={onClose}>← Voltar à fila</button>
+      <div className="review-title">
+        <i className="dot" style={{ background: data.org_color }} />
+        <h2>{data.org_name} <small>revisão {data.number}</small></h2>
       </div>
       <ol className="steps" aria-label="Etapas da revisão">
         {steps.map(([value, label], index) => (
@@ -222,15 +251,22 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
         {counts.every(([, n]) => !n) ? <li>Nenhuma mudança</li> : null}
       </ul>
 
-      <h3>Antes e depois</h3>
-      <div className="preview-pair">
-        <ContentPreview label="Publicado hoje" content={published} org={org} assets={assets} rarities={rarities} numbers={numbers} />
-        <ContentPreview label="Proposto" content={content} org={org} assets={assets} rarities={rarities} numbers={numbers} />
+      <h3>Como fica</h3>
+      <p className="muted">Folheie as páginas e alterne entre o que está no ar hoje e o que o editor propõe. Em tela larga os dois aparecem lado a lado.</p>
+      <div className="preview-wrap">
+      <div className="segmented preview-toggle" role="group" aria-label="Qual versão ver">
+        <button type="button" className={side === 'before' ? 'active' : ''} onClick={() => setSide('before')}>Hoje (no ar)</button>
+        <button type="button" className={side === 'after' ? 'active' : ''} onClick={() => setSide('after')}>Proposta do editor</button>
+      </div>
+      <div className="preview-pair" data-side={side}>
+        <div className="preview-col before"><ContentPreview label="Hoje (no ar)" content={published} org={org} assets={assets} rarities={rarities} numbers={numbers} page={previewPage} onPage={setPreviewPage} /></div>
+        <div className="preview-col after"><ContentPreview label="Proposta do editor" content={content} org={org} assets={assets} rarities={rarities} numbers={numbers} page={previewPage} onPage={setPreviewPage} /></div>
+      </div>
       </div>
 
       <details className="fold" open={counts.reduce((sum, [, n]) => sum + n, 0) <= 8}>
         <summary>Cada mudança em detalhe</summary>
-        <Diff diff={diff} />
+        <RaritiesContext.Provider value={rarities}><Diff diff={diff} /></RaritiesContext.Provider>
       </details>
 
       {['submitted', 'approved'].includes(data.status) && added.length && !frozen ? (
@@ -279,16 +315,23 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
       {['submitted', 'approved'].includes(data.status) || data.can_rollback ? (
         <div className="decision-bar">
           {data.status === 'submitted' ? (
-            <>
-              <label className="field"><span>Nota para o editor <small>(obrigatória ao rejeitar)</small></span>
-                <textarea rows={2} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} />
-              </label>
+            rejecting ? (
+              <>
+                <label className="field"><span>O que o editor precisa corrigir? <small>(vai junto com a devolução)</small></span>
+                  <textarea rows={3} maxLength={2000} autoFocus value={note} onChange={(e) => setNote(e.target.value)} />
+                </label>
+                <div className="decision-buttons">
+                  <button className="btn" onClick={() => setRejecting(false)}>Cancelar</button>
+                  <button className="btn btn-reject" disabled={!note.trim()} onClick={() => act(() => post(`/admin/revisions/${id}/reject`, { note }), 'Revisão devolvida ao editor.')}>Devolver ao editor</button>
+                </div>
+              </>
+            ) : (
               <div className="decision-buttons">
-                <button className="btn btn-reject" onClick={() => act(() => post(`/admin/revisions/${id}/reject`, { note }), 'Revisão rejeitada; voltou para o editor.')}>Rejeitar</button>
-                <button className="btn" onClick={() => act(() => post(`/admin/revisions/${id}/approve`, { note }), 'Revisão aprovada. Falta publicar.')}>Só aprovar</button>
-                <button className="btn btn-primary" onClick={() => window.confirm('Aprovar e publicar? O conteúdo passa a valer para os jogadores em instantes.') && act(async () => { await post(`/admin/revisions/${id}/approve`, { note }); await post(`/admin/revisions/${id}/publish`, publishBody); }, 'Aprovada e publicada: os jogadores já veem a mudança.')}>Aprovar e publicar</button>
+                <button className="btn btn-reject" onClick={() => setRejecting(true)}>Rejeitar</button>
+                <button className="btn" onClick={() => act(() => post(`/admin/revisions/${id}/approve`, { note: '' }), 'Aprovada. Falta publicar.')}>Só aprovar</button>
+                <button className="btn btn-primary" onClick={() => window.confirm('Aprovar e publicar? O conteúdo passa a valer para os jogadores em instantes.') && act(async () => { await post(`/admin/revisions/${id}/approve`, { note: '' }); await post(`/admin/revisions/${id}/publish`, publishBody); }, 'Aprovada e publicada: os jogadores já veem a mudança.')}>Aprovar e publicar</button>
               </div>
-            </>
+            )
           ) : null}
           {data.status === 'approved' ? (
             <div className="decision-buttons">
@@ -423,6 +466,7 @@ export default function AdminReviewPage() {
   const [overview, setOverview] = useState<Row[]>([]);
   const { user } = useAuth();
   const admin = !!user?.is_admin;
+  const [view, setView] = useState<'queue' | 'roles'>('queue');
   const [openId, setOpenId] = useState<number | null>(null);
   const [error, setError] = useState('');
 
@@ -434,32 +478,52 @@ export default function AdminReviewPage() {
     load();
   }, [load]);
 
+  // Revisão aberta ocupa a tela toda (como um e-mail aberto): a fila e os cargos ficam para trás.
+  if (openId) {
+    return (
+      <div className="admin">
+        <Detail key={openId} id={openId} admin={admin} onChanged={load} onClose={() => setOpenId(null)} />
+      </div>
+    );
+  }
   return (
     <div className="admin">
       <header className="admin-top">
         <h1>Revisão de capítulos</h1>
         {admin ? <Link to="/admin">Painel admin</Link> : <Link to="/conta">Minha conta</Link>}
       </header>
-      <section>
-        <nav className="admin-tabs" aria-label="Fila de revisões">
-          {QUEUES.map((name) => <button key={name} className={queue === name ? 'active' : ''} onClick={() => { setQueue(name); setOpenId(null); }}>{QUEUE_LABEL[name]}</button>)}
-        </nav>
-        <Message>{error}</Message>
-        <ul className="admin-list">
-          {rows.map((row) => (
-            <li key={row.id} className={row.id === openId ? 'is-open' : ''}>
-              <span><i className="dot" style={{ background: row.org_color }} /> <b>{row.org_name}</b> · revisão {row.number}
-                <small className="album-dates">{row.album.title} · {(row.contributors?.length ? row.contributors.join(', ') : row.author) ?? '—'} · {when(row.submitted_at ?? row.updated_at)}{row.is_live ? ' · no ar' : ''}</small>
-              </span>
-              <button className="link" onClick={() => setOpenId(row.id === openId ? null : row.id)}>{row.id === openId ? 'Fechar' : 'Revisar'}</button>
-            </li>
-          ))}
-        </ul>
-        {rows.length ? null : <p className="muted">{queue === 'submitted' ? 'Nada esperando revisão.' : 'Nada nesta fila.'}</p>}
-      </section>
-      {openId ? <Detail key={openId} id={openId} admin={admin} onChanged={load} onClose={() => setOpenId(null)} /> : null}
-      {admin ? <Editors rows={overview} reload={load} /> : null}
-      {admin ? <Promoters /> : null}
+      {admin ? (
+        <div className="segmented" role="tablist" aria-label="Área">
+          <button type="button" role="tab" aria-selected={view === 'queue'} className={view === 'queue' ? 'active' : ''} onClick={() => setView('queue')}>Revisões</button>
+          <button type="button" role="tab" aria-selected={view === 'roles'} className={view === 'roles' ? 'active' : ''} onClick={() => setView('roles')}>Cargos</button>
+        </div>
+      ) : null}
+      {view === 'queue' ? (
+        <section>
+          <nav className="admin-tabs" aria-label="Fila de revisões">
+            {QUEUES.map((name) => <button key={name} className={queue === name ? 'active' : ''} onClick={() => setQueue(name)}>{QUEUE_LABEL[name]}</button>)}
+          </nav>
+          <Message>{error}</Message>
+          <ul className="review-list">
+            {rows.map((row) => (
+              <li key={row.id}>
+                <i className="dot" style={{ background: row.org_color }} />
+                <div className="review-row-main">
+                  <b>{row.org_name}</b> <small>revisão {row.number}{row.is_live ? ' · no ar' : ''}</small>
+                  <small className="album-dates">{row.album.title} · por {(row.contributors?.length ? row.contributors.join(', ') : row.author) ?? '—'} · {when(row.submitted_at ?? row.updated_at)}</small>
+                </div>
+                <button className="btn" onClick={() => setOpenId(row.id)}>Revisar</button>
+              </li>
+            ))}
+          </ul>
+          {rows.length ? null : <p className="muted">{queue === 'submitted' ? 'Nada esperando revisão.' : 'Nada nesta fila.'}</p>}
+        </section>
+      ) : (
+        <>
+          <Editors rows={overview} reload={load} />
+          <Promoters />
+        </>
+      )}
     </div>
   );
 }
