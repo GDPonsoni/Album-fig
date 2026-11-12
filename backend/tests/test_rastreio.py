@@ -140,3 +140,12 @@ def test_colar_registra_no_exemplar_mais_antigo(db, content, make_user, login, g
     assert len(copies) == 2
     pasted = db.scalars(select(StickerCopyEvent).where(StickerCopyEvent.event == "pasted")).all()
     assert [e.copy_id for e in pasted] == [copies[0].id]  # o mais antigo é o colado
+
+
+def test_superadmin_usa_a_area_do_promotor_sem_cota(db, album, admin):
+    user, client = admin
+    assert client.get("/api/me").json()["promoter"] is True
+    body = {"pack_type_id": pack_id(db, album), "count": 50, "label": "admin"}
+    assert client.post("/api/promo/codes", json=body).status_code == 201
+    assert client.post("/api/promo/codes", json=body).status_code == 201  # passa da cota de 20: admin não tem
+    assert client.get("/api/promo/overview").json()["unlimited"] is True

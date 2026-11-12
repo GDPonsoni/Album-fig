@@ -263,26 +263,31 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
 }
 
 function History({ openings }: { openings: Opening[] }) {
+  const [shown, setShown] = useState(5);
   if (!openings.length) return null;
   const when = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  // Recolhido por padrão: o histórico é consulta, não a tela principal. Cada pacote também abre só quando tocado.
   return (
-    <section className="history" aria-label="Últimos pacotes abertos">
-      <h2 className="extras-title">Últimos pacotes abertos</h2>
+    <details className="history" aria-label="Últimos pacotes abertos">
+      <summary className="extras-title">Últimos pacotes abertos ({openings.length})</summary>
       <ul className="history-list">
-        {openings.map((opening) => {
+        {openings.slice(0, shown).map((opening) => {
           const fresh = opening.items.filter((item) => item.is_new).length;
           return (
             <li key={opening.pack.id} className="history-pack">
-              <p className="history-head">
-                <strong>{opening.pack.name}</strong>
-                <small>{when(opening.opened_at)} · {fresh ? `${fresh} ${fresh === 1 ? 'nova' : 'novas'}` : 'só repetidas'}</small>
-              </p>
-              <DropGrid items={opening.items} className="history-grid" />
+              <details>
+                <summary className="history-head">
+                  <strong>{opening.pack.name}</strong>
+                  <small>{when(opening.opened_at)} · {fresh ? `${fresh} ${fresh === 1 ? 'nova' : 'novas'}` : 'só repetidas'}</small>
+                </summary>
+                <DropGrid items={opening.items} className="history-grid" />
+              </details>
             </li>
           );
         })}
       </ul>
-    </section>
+      {shown < openings.length ? <button type="button" className="btn" onClick={() => setShown((n) => n + 5)}>Mostrar mais</button> : null}
+    </details>
   );
 }
 

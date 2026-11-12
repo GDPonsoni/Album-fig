@@ -909,3 +909,15 @@ button:disabled { cursor: default; }
 .editor-bar .btn { flex: 1 1 0; min-width: 0; padding-inline: 10px; white-space: normal; line-height: 1.15; }
 .link-row { flex-wrap: wrap; }
 .link-row input { min-width: 0; flex: 1 1 120px; }
+
+/* Campos de código (2FA): sempre legíveis, mesmo dentro de fundo escuro ou de overlay (o texto herda cor clara). */
+.mfa-prompt input, .two-factor input, .role-zone input, .role-zone select { color: var(--ink); background: var(--card); }
+.code-input { font-family: ui-monospace, Menlo, monospace; font-size: 20px; letter-spacing: 0.12em; text-align: center; }
+.two-factor .field input { font-family: ui-monospace, Menlo, monospace; letter-spacing: 0.08em; }
+
+details.history > summary { cursor: pointer; list-style: none; padding: 10px 0; }
+details.history > summary::-webkit-details-marker { display: none; }
+details.history > summary::after { content: ' ▾'; }
+details.history[open] > summary::after { content: ' ▴'; }
+.history-pack > details > summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; cursor: pointer; padding: 8px 0; list-style: none; }
+.history-pack > details > summary::-webkit-details-marker { display: none; }

@@ -132,8 +132,8 @@ def promoter_grant(db: Session, user_id: int) -> RoleGrant | None:
 
 
 def promoter_user(user: User = Depends(verified_user), db: Session = Depends(get_db)) -> User:
-    """Promotor vigente (conferido no banco a cada requisição). Quem não é recebe 404, como nas outras áreas."""
-    if promoter_grant(db, user.id) is None:
+    """Promotor vigente (conferido no banco a cada requisição) ou superadmin. Quem não é recebe 404, como nas outras áreas."""
+    if not user.is_admin and promoter_grant(db, user.id) is None:
         raise HTTPException(404, "Não encontrado.")
     return user
 

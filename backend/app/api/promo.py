@@ -35,6 +35,7 @@ class CodesIn(BaseModel):
 def overview(user: User = Depends(promoter_user), db: Session = Depends(get_db)):
     album = current_album(db, user)
     limit = int(cfg(db, "promo.codes_per_day"))
+    unlimited = user.is_admin  # o superadmin não tem cota
     packs = (
         db.scalars(select(PackType).where(PackType.album_id == album.id).order_by(PackType.id)).all() if album else []
     )
@@ -48,7 +49,8 @@ def overview(user: User = Depends(promoter_user), db: Session = Depends(get_db))
     return {
         "album": {"id": album.id, "title": album.title} if album else None,
         "limit": limit,
-        "left": max(0, limit - _used(db, user)),
+        "unlimited": unlimited,
+        "left": 200 if unlimited else max(0, limit - _used(db, user)),
         "pack_types": [{"id": p.id, "slug": p.slug, "name": p.name, "stickers_per_pack": p.stickers_per_pack} for p in packs],
         "codes": [
             {
@@ -72,7 +74,7 @@ def create_codes(body: CodesIn, user: User = Depends(promoter_user), db: Session
         raise HTTPException(400, "A validade precisa estar no futuro.")
     lock_user(db, user.id)  # duas gerações ao mesmo tempo não furam a cota
     limit = int(cfg(db, "promo.codes_per_day"))
-    left = limit - _used(db, user)
+    left = 10**6 if user.is_admin else limit - _used(db, user)
     if body.count > left:
         raise HTTPException(429, f"Cota diária: você ainda pode gerar {max(left, 0)} de {limit} códigos nas últimas 24 horas.")
     codes = [generate_code() for _ in range(body.count)]
@@ -84,4 +86,4 @@ def create_codes(body: CodesIn, user: User = Depends(promoter_user), db: Session
     )
     audit(db, user.id, "promo.codes_create", count=body.count, label=body.label, pack_type_id=pack.id, album_id=album.id)
     db.commit()
-    return {"codes": codes, "left": left - body.count}
+    return {"codes": codes, "left": min(left - body.count, 200)}
