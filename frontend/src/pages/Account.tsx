@@ -112,7 +112,7 @@ function TwoFactor() {
         </form>
       ) : (
         <form className="stack" onSubmit={start}>
-          <p className="muted">Obrigatória para aprovar e publicar revisões e para conceder papéis de editor.</p>
+          <p className="muted">Obrigatória para aprovar e publicar revisões e, no superadmin, para conceder papéis.</p>
           <label className="field"><span>Sua senha</span>
             <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
@@ -141,9 +141,11 @@ export function AccountPage() {
       </section>
       <MyAlbumsSection />
       {user.editor_chapters ? <Link className="btn btn-primary" to="/editor">Editar meu capítulo</Link> : null}
-      {user.is_admin ? <TwoFactor /> : null}
+      {user.is_admin || user.reviewer_chapters ? <TwoFactor /> : null}
+      {user.promoter ? <Link className="btn" to="/promotor">Gerar códigos de pacote</Link> : null}
       {user.is_admin ? <Link className="btn" to="/admin">Painel admin</Link> : null}
       {user.is_admin ? <Link className="btn" to="/admin/revisoes">Revisões e editores</Link> : null}
+      {!user.is_admin && user.reviewer_chapters ? <Link className="btn" to="/admin/revisoes">Revisar capítulos</Link> : null}
       <button className="btn" onClick={signOut}>Sair</button>
     </div>
   );

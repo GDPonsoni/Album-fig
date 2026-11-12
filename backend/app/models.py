@@ -251,6 +251,8 @@ class PackGrant(Base):
     pack_type_id: Mapped[int] = mapped_column(ForeignKey("pack_type.id", ondelete="RESTRICT"))
     source: Mapped[str] = mapped_column(_enum("daily", "code", "admin", name="pack_source"))
     source_ref: Mapped[str | None] = mapped_column(String(120))
+    # Quem gerou o pacote: quem criou o código ou quem concedeu. Nulo = sistema (gaveta diária).
+    origin_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), index=True)
     granted_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
     opened_at: Mapped[datetime | None] = mapped_column(Timestamp)
 
@@ -291,10 +293,44 @@ class RedeemCode(Base):
     pack_type_id: Mapped[int] = mapped_column(ForeignKey("pack_type.id", ondelete="RESTRICT"))
     label: Mapped[str] = mapped_column(String(80), default="", server_default="")
     expires_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
     redeemed_by: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
     redeemed_at: Mapped[datetime | None] = mapped_column(Timestamp)
 
     pack_type: Mapped[PackType] = relationship(lazy="joined")
+
+
+class StickerCopy(Base):
+    """Um exemplar físico de figurinha, do sorteio até onde está hoje. `user_sticker` segue sendo o
+    inventário do jogo (quantidade); aqui fica a origem de cada exemplar e por quem ele passou."""
+
+    __tablename__ = "sticker_copy"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sticker_id: Mapped[int] = mapped_column(ForeignKey("sticker.id", ondelete="CASCADE"), index=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), index=True)
+    # Pacote e posição em que saiu. Nulo = exemplar anterior ao rastreio ou conta/pacote apagado.
+    origin_grant_id: Mapped[int | None] = mapped_column(ForeignKey("pack_grant.id", ondelete="SET NULL"), index=True)
+    origin_position: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
+
+    __table_args__ = (Index("ix_sticker_copy_owner_sticker", "owner_id", "sticker_id"),)
+
+
+class StickerCopyEvent(Base):
+    """Cadeia de custódia de um exemplar: sorteio, trocas e colagem. Só se acrescenta."""
+
+    __tablename__ = "sticker_copy_event"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    copy_id: Mapped[int] = mapped_column(ForeignKey("sticker_copy.id", ondelete="CASCADE"), index=True)
+    event: Mapped[str] = mapped_column(_enum("drawn", "traded", "pasted", "legacy", name="copy_event"))
+    from_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
+    to_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), index=True)
+    pack_grant_id: Mapped[int | None] = mapped_column(ForeignKey("pack_grant.id", ondelete="SET NULL"))
+    trade_id: Mapped[int | None] = mapped_column(ForeignKey("trade.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
 
 
 class Trade(Base):
@@ -351,14 +387,15 @@ class Config(Base):
 
 
 class RoleGrant(Base):
-    """Papel de editor num capítulo. Conferido no banco a cada requisição: revogar vale na hora."""
+    """Papel (editor, revisor ou promotor) numa pessoa. Conferido no banco a cada requisição: revogar vale na hora."""
 
     __tablename__ = "role_grant"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
-    chapter_id: Mapped[int] = mapped_column(ForeignKey("album_chapter.id", ondelete="CASCADE"), index=True)
-    role: Mapped[str] = mapped_column(_enum("editor", name="role_grant_role"), default="editor")
+    # Nulo só no promotor, cujo papel vale para o álbum todo e não para um capítulo.
+    chapter_id: Mapped[int | None] = mapped_column(ForeignKey("album_chapter.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(_enum("editor", "reviewer", "promoter", name="role_grant_role"), default="editor")
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"))
     granted_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
     expires_at: Mapped[datetime | None] = mapped_column(Timestamp)
@@ -392,6 +429,8 @@ class ChapterRevision(Base):
     published_at: Mapped[datetime | None] = mapped_column(Timestamp)
     # O que estava em produção logo antes desta publicação: é o que o rollback reaplica.
     previous_content: Mapped[dict[str, Any] | None] = mapped_column(Json)
+    # Ids de quem salvou este rascunho (editores distintos, na ordem em que apareceram).
+    contributors: Mapped[list[int]] = mapped_column(Json, default=list)
 
     __table_args__ = (
         UniqueConstraint("chapter_id", "number", name="uq_chapter_revision_number"),

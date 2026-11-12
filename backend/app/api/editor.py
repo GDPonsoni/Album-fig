@@ -124,6 +124,18 @@ def submit(
     return {"revision": _revision_view(revision)}
 
 
+@router.post("/chapters/{chapter_id}/withdraw")
+def withdraw(
+    chapter: AlbumChapter = Depends(require_chapter_editor),
+    user: User = Depends(verified_user),
+    db: Session = Depends(get_db),
+):
+    """Retira o envio para revisão: o rascunho volta a ser editável."""
+    revision = revisions.withdraw(db, user, chapter)
+    db.commit()
+    return {"revision": _revision_view(revision)}
+
+
 @router.get("/chapters/{chapter_id}/assets")
 def list_assets(chapter: AlbumChapter = Depends(require_chapter_editor), db: Session = Depends(get_db)):
     return [_asset_view(a) for a in db.scalars(select(Asset).where(Asset.chapter_id == chapter.id).order_by(Asset.id))]

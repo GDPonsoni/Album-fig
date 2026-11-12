@@ -67,7 +67,7 @@ export function clearNext() {
   }
 }
 
-export function RequireAuth({ children, admin }: { children: ReactNode; admin?: boolean }) {
+export function RequireAuth({ children, admin, staff }: { children: ReactNode; admin?: boolean; staff?: boolean }) {
   const { user } = useAuth();
   const location = useLocation();
   const here = location.pathname + location.search;
@@ -81,5 +81,6 @@ export function RequireAuth({ children, admin }: { children: ReactNode; admin?: 
     return <Navigate to="/entrar" replace state={{ next: here }} />;
   }
   if (admin && !user.is_admin) return <Navigate to="/" replace />;
+  if (staff && !user.is_admin && !user.reviewer_chapters) return <Navigate to="/" replace />;
   return <>{children}</>;
 }

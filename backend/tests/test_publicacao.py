@@ -629,7 +629,6 @@ def test_album_em_andamento_so_publica_o_cosmetico(db, album, chapter, content, 
 
     # O servidor recusa já no rascunho o que mexe na estrutura.
     for change in (
-        lambda c: c["stickers"].append(new_sticker()),
         lambda c: c["stickers"].pop(),
         lambda c: c["stickers"][0].update(active=False),
         lambda c: c.update(mosaic={"asset_id": upload(client, chapter, kind="mosaic").json()["id"], "cols": 2, "rows": 2}),
@@ -642,12 +641,12 @@ def test_album_em_andamento_so_publica_o_cosmetico(db, album, chapter, content, 
     # E a publicação confere de novo: uma revisão aprovada antes do álbum começar não fura o congelamento.
     set_period(db, album, 10, 100)
     structural = copy.deepcopy(base)
-    structural["stickers"].append(new_sticker(name="Tardia"))
+    removed = structural["stickers"].pop()
     revision_id = submit_and_approve(client, admin_client, chapter, structural)
     set_period(db, album, -1, 100)
     before = snapshot(db)
     response = admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={})
-    assert response.status_code == 409 and "figurinha nova: Tardia" in response.json()["detail"]
+    assert response.status_code == 409 and f"figurinha removida: {removed['name']}" in response.json()["detail"]
     assert snapshot(db) == before
     assert admin_client.post(f"/api/admin/revisions/{revision_id}/reject", json={"note": "x"}).status_code == 409  # aprovada não se rejeita
     db.execute(ChapterRevision.__table__.delete())
@@ -675,6 +674,149 @@ def test_album_em_andamento_so_publica_o_cosmetico(db, album, chapter, content, 
     assert db.scalar(select(func.count()).select_from(Sticker)) == 17
     # O inventário do jogador não foi tocado.
     assert db.execute(text("SELECT quantity, pasted FROM user_sticker WHERE user_id = :u"), {"u": player.id}).one() == (2, True)
+
+
+def test_album_em_andamento_aceita_figurinha_nova_no_proximo_numero(db, album, chapter, content, editor, admin, give, make_user):
+    _, client = editor
+    _, admin_client = admin
+    player = make_user("Tem")
+    give(player, content[0], 1, pasted=True)
+    base = draft_of(client, chapter)["content"]
+    draft = copy.deepcopy(base)
+    draft["stickers"].append(new_sticker(name="Tardia", suggested_rarity_id=3))
+    key = draft["stickers"][-1]["key"]
+    revision_id = submit_and_approve(client, admin_client, chapter, draft)
+    top = db.scalar(select(func.max(Sticker.number)).where(Sticker.album_id == album.id))
+    url = f"/api/admin/revisions/{revision_id}/publish"
+    assert admin_client.post(url, json={"stickers": {key: {"number": 1}}}).status_code == 409  # número em uso
+    assert admin_client.post(url, json={"stickers": {key: {"rarity_id": 2}}}).status_code == 200  # revisor escolhe a raridade
+    db.expire_all()
+    row = db.scalar(select(Sticker).where(Sticker.name == "Tardia"))
+    assert (row.number, row.rarity_id, row.active) == (top + 1, 2, True)
+    # O que já existia e o inventário do jogador seguem intactos.
+    assert db.execute(text("SELECT quantity, pasted FROM user_sticker WHERE user_id = :u"), {"u": player.id}).one() == (1, True)
+    # Já removê-la agora é estrutura: continua barrado.
+    again = copy.deepcopy(draft_of(client, chapter)["content"])
+    again["stickers"] = [s for s in again["stickers"] if s["key"] != key]
+    response = save(client, chapter, again)
+    assert response.status_code == 409 and "congelada" in response.json()["detail"]
+
+
+def test_editor_retira_o_envio_e_edita_de_novo(db, chapter, editor, admin):
+    _, client = editor
+    _, admin_client = admin
+    draft = draft_of(client, chapter)["content"]
+    assert client.post(f"/api/editor/chapters/{chapter.id}/withdraw").status_code == 409  # nada enviado
+    assert save(client, chapter, draft).status_code == 200
+    assert client.post(f"/api/editor/chapters/{chapter.id}/submit").status_code == 200
+    assert save(client, chapter, draft).status_code == 409
+    assert client.post(f"/api/editor/chapters/{chapter.id}/withdraw").status_code == 200
+    assert admin_client.get("/api/admin/revisions").json() == []  # saiu da fila
+    draft["pages"][0]["title"] = "Mudei"
+    assert save(client, chapter, draft).status_code == 200
+    # Aprovada e ainda não publicada também volta; publicada não.
+    revision_id = submit_and_approve(client, admin_client, chapter, draft)
+    assert client.post(f"/api/editor/chapters/{chapter.id}/withdraw").status_code == 200
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 409
+    revision_id = submit_and_approve(client, admin_client, chapter, draft)
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    assert client.post(f"/api/editor/chapters/{chapter.id}/withdraw").status_code == 409
+    assert "revision.withdraw" in {log.action for log in db.scalars(select(AuditLog))}
+
+
+# ====================================================================== revisor
+
+
+@pytest.fixture
+def reviewer(db, chapter, make_user, mfa_login, admin):
+    user = make_user("Revisa")
+    _, admin_client = admin
+    response = admin_client.post(f"/api/admin/chapters/{chapter.id}/editors", json={"email": user.email, "role": "reviewer"})
+    assert response.status_code == 201 and response.json()["role"] == "reviewer"
+    return user, mfa_login(user)
+
+
+def test_revisor_aprova_publica_e_desfaz_so_no_seu_capitulo(db, album, chapter, other_chapter, editor, reviewer, admin):
+    _, client = editor
+    _, rev = reviewer
+    draft = draft_of(client, chapter)["content"]
+    draft["stickers"][0]["name"] = "Por revisor"
+    assert save(client, chapter, draft).status_code == 200
+    assert client.post(f"/api/editor/chapters/{chapter.id}/submit").status_code == 200
+    queue = rev.get("/api/admin/revisions").json()
+    assert [r["chapter_id"] for r in queue] == [chapter.id]
+    revision_id = queue[0]["id"]
+    assert rev.get(f"/api/admin/revisions/{revision_id}").status_code == 200
+    assert rev.post(f"/api/admin/revisions/{revision_id}/approve", json={"note": "ok"}).status_code == 200
+    assert rev.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    db.expire_all()
+    assert db.scalar(select(func.count()).select_from(Sticker).where(Sticker.name == "Por revisor")) == 1
+    assert rev.post(f"/api/admin/revisions/{revision_id}/rollback").status_code == 200
+    assert db.scalar(select(func.count()).select_from(Sticker).where(Sticker.name == "Por revisor")) == 0
+    actions = {log.action for log in db.scalars(select(AuditLog))}
+    assert {"revision.approve", "revision.publish", "revision.rollback"} <= actions
+
+
+def test_revisor_nao_alcanca_o_que_nao_e_dele(db, chapter, other_chapter, editor, reviewer, make_user, login, admin):
+    _, client = editor
+    _, rev = reviewer
+    # Revisão de outro capítulo: mesma 404 de inexistente.
+    other_rev = ChapterRevision(chapter_id=other_chapter.id, number=1, status="submitted", content={})
+    db.add(other_rev)
+    db.commit()
+    for method, path in (("get", ""), ("post", "/approve"), ("post", "/reject"), ("post", "/publish"), ("post", "/rollback")):
+        response = getattr(rev, method)(f"/api/admin/revisions/{other_rev.id}{path}", **({"json": {}} if method == "post" else {}))
+        assert response.status_code == 404, path
+    assert rev.get(f"/api/admin/revisions?chapter_id={other_chapter.id}").status_code == 404
+    # Papéis, auditoria e visão geral seguem só do superadmin; conceder também.
+    me = db.scalar(select(User).where(User.nickname == "Revisa"))
+    assert rev.get(f"/api/admin/chapters/{chapter.id}/editors").status_code == 403
+    assert rev.get(f"/api/admin/chapters/{chapter.id}/audit").status_code == 403
+    assert rev.get("/api/admin/editors/overview").status_code == 403
+    assert rev.post(f"/api/admin/chapters/{chapter.id}/editors", json={"email": me.email}).status_code == 403
+    # Quem não tem papel nenhum fica fora da fila.
+    assert login(make_user("Nada")).get("/api/admin/revisions").status_code == 403
+    # E o painel de admin continua fechado.
+    assert rev.get("/api/admin/albums").status_code == 403
+
+
+def test_revisor_precisa_de_2fa_e_nao_julga_a_propria_revisao(db, chapter, editor, make_user, login, mfa_login, admin, grant):
+    _, admin_client = admin
+    user = make_user("Dupla")
+    grant(user, chapter)  # editor e revisor do mesmo capítulo
+    assert admin_client.post(f"/api/admin/chapters/{chapter.id}/editors", json={"email": user.email, "role": "reviewer"}).status_code == 201
+    plain = login(user)
+    assert plain.get("/api/me").json()["reviewer_chapters"] == 1
+    assert plain.get("/api/me").json()["editor_chapters"] == 1
+    draft = draft_of(plain, chapter)["content"]
+    assert save(plain, chapter, draft).status_code == 200
+    assert plain.post(f"/api/editor/chapters/{chapter.id}/submit").status_code == 200
+    revision_id = plain.get("/api/admin/revisions").json()[0]["id"]
+    response = plain.post(f"/api/admin/revisions/{revision_id}/approve", json={"note": "x"})
+    assert response.status_code == 403 and response.headers["x-mfa"] == "setup"  # sem 2FA ativo
+    strong = mfa_login(user)
+    assert strong.post(f"/api/admin/revisions/{revision_id}/approve", json={"note": "x"}).status_code == 403
+    assert strong.post(f"/api/admin/revisions/{revision_id}/reject", json={"note": "x"}).status_code == 403
+    # O superadmin pode.
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/approve", json={"note": "ok"}).status_code == 200
+
+
+def test_revogar_revisor_vale_na_hora_e_ele_ativa_o_2fa(db, chapter, reviewer, admin, login):
+    user, rev = reviewer
+    _, admin_client = admin
+    assert rev.get("/api/admin/revisions").status_code == 200
+    grant_id = db.scalar(select(RoleGrant.id).where(RoleGrant.user_id == user.id))
+    assert admin_client.delete(f"/api/admin/roles/{grant_id}").status_code == 204
+    assert rev.get("/api/admin/revisions").status_code == 403
+    assert rev.get("/api/me").json()["reviewer_chapters"] == 0
+
+
+def test_revisor_ve_imagem_privada_do_capitulo(db, chapter, editor, reviewer, make_user, login):
+    _, client = editor
+    _, rev = reviewer
+    asset = upload(client, chapter).json()
+    assert rev.get(asset["url"]).status_code == 200
+    assert login(make_user("Fora")).get(asset["url"]).status_code == 404
 
 
 def test_album_encerrado_recusa_tudo(db, album, chapter, editor, admin):
@@ -767,6 +909,11 @@ def test_mosaico_pela_publicacao(db, album, chapter, editor, admin):
     assert admin_client.post(f"/api/admin/revisions/{first}/publish", json={"mosaic_rarity_id": 2}).status_code == 200
     pieces = db.scalars(select(Sticker).where(Sticker.is_mosaic_piece.is_(True)).order_by(Sticker.mosaic_index)).all()
     assert len(pieces) == 6 and {p.rarity_id for p in pieces} == {2} and [p.number for p in pieces] == list(range(18, 24))
+    # Toda peça tem a proporção 3:4 das figurinhas normais, mesmo com a imagem em outra proporção (400x600 numa grade 2x3).
+    from app.services.images import read_media
+    for piece in pieces:
+        with Image.open(io.BytesIO(read_media(piece.image_url))) as tile:
+            assert abs(tile.width / tile.height - 3 / 4) < 0.02, (tile.width, tile.height)
     db.expire_all()
     assert db.get(AlbumChapter, chapter.id).mosaic_image_url == poster["url"]
     old_images = [p.image_url for p in pieces]
@@ -807,7 +954,7 @@ def test_acoes_de_revisao_sao_auditadas(db, album, chapter, editor, admin):
         select(AuditLog.action, AuditLog.user_id).where(AuditLog.action.like("revision.%")).order_by(AuditLog.id)
     ).all()
     assert [tuple(r) for r in rows] == [
-        ("revision.submit", editor_user.id), ("revision.reject", admin_user.id), ("revision.submit", editor_user.id),
+        ("revision.edit", editor_user.id), ("revision.submit", editor_user.id), ("revision.reject", admin_user.id), ("revision.submit", editor_user.id),
         ("revision.approve", admin_user.id), ("revision.publish", admin_user.id), ("revision.rollback", admin_user.id),
     ]
     trail = admin_client.get(f"/api/admin/chapters/{chapter.id}/audit").json()
@@ -849,7 +996,7 @@ def test_ativar_2fa_confirma_codigo_e_entrega_codigos_de_recuperacao(db, make_us
     assert client.post("/api/auth/2fa/setup", json={"password": "senha-de-teste"}).status_code == 409
 
 
-def test_2fa_e_so_para_superadmin(make_user, login):
+def test_2fa_e_so_para_superadmin_e_revisor(make_user, login):
     client = login(make_user("Comum"))
     for path, body in (("setup", {"password": "senha-de-teste"}), ("enable", {"code": "123456"}), ("verify", {"code": "123456"})):
         assert client.post(f"/api/auth/2fa/{path}", json=body).status_code == 403

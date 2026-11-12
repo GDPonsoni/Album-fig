@@ -29,7 +29,7 @@ def _pack_type(db: Session, user: User, slug: str) -> PackType:
 def create_code(body: PackIn, user: User = Depends(verified_user), db: Session = Depends(get_db)):
     pack_type = _pack_type(db, user, body.slug)
     code = generate_code()
-    db.add(RedeemCode(code=code, album_id=pack_type.album_id, pack_type_id=pack_type.id, label="dev"))
+    db.add(RedeemCode(code=code, album_id=pack_type.album_id, pack_type_id=pack_type.id, label="dev", created_by=user.id))
     audit(db, user.id, "dev.code_create", pack_type_id=pack_type.id)
     db.commit()
     return {"code": code}
@@ -37,6 +37,6 @@ def create_code(body: PackIn, user: User = Depends(verified_user), db: Session =
 
 @router.post("/packs", status_code=201)
 def add_pack(body: PackIn, user: User = Depends(verified_user), db: Session = Depends(get_db)):
-    grant_pack(db, user.id, _pack_type(db, user, body.slug), "admin", "dev")
+    grant_pack(db, user.id, _pack_type(db, user, body.slug), "admin", "dev", origin_user_id=user.id)
     db.commit()
     return {"ok": True}

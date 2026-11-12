@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, post, type GrantView } from '../api';
 import { clearNext, useAuth } from '../auth';
 import { Message, VerifyBanner } from '../components/ui';
@@ -15,10 +15,13 @@ export function RedeemLinkPage() {
   const { codigo = '' } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  // Vindo da câmera (`auto`): ler o QR já é a escolha de resgatar, sem o toque extra.
+  const auto = useRef((useLocation().state as { auto?: boolean } | null)?.auto === true);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [grant, setGrant] = useState<GrantView | null>(null);
+  const started = useRef(false);
 
   useEffect(() => {
     clearNext();
@@ -26,6 +29,14 @@ export function RedeemLinkPage() {
       .then(setPreview)
       .catch((err) => setError(err.message));
   }, [codigo]);
+
+  useEffect(() => {
+    if (auto.current && preview && user?.verified && !started.current) {
+      started.current = true;
+      redeem();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, user?.verified]);
 
   const redeem = async () => {
     setBusy(true);

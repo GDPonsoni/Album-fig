@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Album, AlbumParticipation, PackGrant, PackOpeningItem, PackType, Rarity, Sticker, User, UserSticker
 from app.services.albums import current_album, get_or_create_participation, participation, require_live, require_same_album
+from app.services import provenance
 from app.services.core import audit, cfg, lock_user, now
 
 _rng = random.SystemRandom()
@@ -71,18 +72,22 @@ def draw_stickers(
     return picked
 
 
-def grant_pack(db: Session, user_id: int, pack_type: PackType, source: str, source_ref: str | None = None) -> PackGrant:
+def grant_pack(
+    db: Session, user_id: int, pack_type: PackType, source: str, source_ref: str | None = None, origin_user_id: int | None = None
+) -> PackGrant:
     """O pacote é sempre de um álbum: tipo de pacote modelo (sem álbum) não pode ser concedido."""
     if pack_type.album_id is None:
         raise RuntimeError("Tipo de pacote modelo não pode ser concedido.")
     grant = PackGrant(
-        user_id=user_id, album_id=pack_type.album_id, pack_type_id=pack_type.id, source=source, source_ref=source_ref
+        user_id=user_id, album_id=pack_type.album_id, pack_type_id=pack_type.id, source=source, source_ref=source_ref,
+        origin_user_id=origin_user_id,
     )
     db.add(grant)
     db.flush()
     audit(
         db, user_id, "pack.grant",
         grant_id=grant.id, album_id=pack_type.album_id, pack_type_id=pack_type.id, source=source, source_ref=source_ref,
+        origin_user_id=origin_user_id,
     )
     return grant
 
@@ -220,6 +225,7 @@ def open_pack(db: Session, user: User, grant_id: int) -> tuple[PackGrant, list[t
         is_new = sticker.id not in owned
         owned.add(sticker.id)
         add_to_inventory(db, user.id, sticker.id, 1)
+        provenance.record_draw(db, user.id, sticker.id, grant.id, position)
         db.add(PackOpeningItem(pack_grant_id=grant.id, position=position, sticker_id=sticker.id, is_new=is_new))
         result.append((sticker, is_new))
 

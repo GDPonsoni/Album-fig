@@ -81,12 +81,13 @@ def admin_mfa(user: User = Depends(admin_user), session: UserSession = Depends(c
     return user
 
 
-def active_grant(db: Session, user_id: int, chapter_id: int) -> RoleGrant | None:
+def active_grant(db: Session, user_id: int, chapter_id: int, role: str | None = "editor") -> RoleGrant | None:
+    """Papel vigente da pessoa no capítulo; `role=None` aceita qualquer um (usado para ver imagens privadas)."""
     return db.scalar(
         select(RoleGrant).where(
             RoleGrant.user_id == user_id,
             RoleGrant.chapter_id == chapter_id,
-            RoleGrant.role == "editor",
+            RoleGrant.role == role if role is not None else RoleGrant.role.is_not(None),
             RoleGrant.revoked_at.is_(None),
             (RoleGrant.expires_at.is_(None)) | (RoleGrant.expires_at > now()),
         )
@@ -103,3 +104,51 @@ def require_chapter_editor(
     if chapter is None or active_grant(db, user.id, chapter_id) is None:
         raise HTTPException(404, "Capítulo não encontrado.")
     return chapter
+
+
+def can_review(db: Session, user: User, chapter_id: int) -> bool:
+    return user.is_admin or active_grant(db, user.id, chapter_id, "reviewer") is not None
+
+
+def reviewer_chapter_ids(db: Session, user: User) -> list[int]:
+    moment = now()
+    return list(
+        db.scalars(
+            select(RoleGrant.chapter_id).where(
+                RoleGrant.user_id == user.id, RoleGrant.role == "reviewer", RoleGrant.revoked_at.is_(None),
+                (RoleGrant.expires_at.is_(None)) | (RoleGrant.expires_at > moment),
+            )
+        )
+    )
+
+
+def promoter_grant(db: Session, user_id: int) -> RoleGrant | None:
+    return db.scalar(
+        select(RoleGrant).where(
+            RoleGrant.user_id == user_id, RoleGrant.role == "promoter", RoleGrant.revoked_at.is_(None),
+            (RoleGrant.expires_at.is_(None)) | (RoleGrant.expires_at > now()),
+        )
+    )
+
+
+def promoter_user(user: User = Depends(verified_user), db: Session = Depends(get_db)) -> User:
+    """Promotor vigente (conferido no banco a cada requisição). Quem não é recebe 404, como nas outras áreas."""
+    if promoter_grant(db, user.id) is None:
+        raise HTTPException(404, "Não encontrado.")
+    return user
+
+
+def staff_user(user: User = Depends(verified_user), db: Session = Depends(get_db)) -> User:
+    """Superadmin ou revisor de algum capítulo: quem pode ter o segundo fator e usar a fila de revisão."""
+    if not user.is_admin and not reviewer_chapter_ids(db, user):
+        raise HTTPException(403, "Acesso restrito.")
+    return user
+
+
+def staff_mfa(user: User = Depends(staff_user), session: UserSession = Depends(current_session)) -> User:
+    """Como `admin_mfa`, para revisores também: segundo fator ativo e confirmado há pouco."""
+    if not mfa.is_enabled(user):
+        raise HTTPException(403, mfa.SETUP_REQUIRED, headers={"X-MFA": "setup"})
+    if not mfa.is_fresh(session):
+        raise HTTPException(403, mfa.VERIFY_REQUIRED, headers={"X-MFA": "verify"})
+    return user

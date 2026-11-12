@@ -90,7 +90,7 @@ export function TradeHome() {
         <button className="btn btn-primary btn-big" disabled={busy || !user?.verified} onClick={start}>Trocar</button>
         <button className="btn btn-big" disabled={!user?.verified} onClick={() => setScanning(true)}>Ler QR</button>
       </section>
-      {scanning ? <QrScanner onRead={(path) => navigate(path)} onClose={() => setScanning(false)} /> : null}
+      {scanning ? <QrScanner onClose={() => setScanning(false)} /> : null}
       {dupes ? <DuplicatesPanel dupes={dupes} /> : null}
     </div>
   );

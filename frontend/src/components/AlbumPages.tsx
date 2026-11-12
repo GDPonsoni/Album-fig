@@ -61,6 +61,16 @@ export function StickerPage({ detail, onOpen, lastPasted, overlay }: { detail: P
   );
 }
 
+/** Largura do mosaico em % da página: cada peça tem o tamanho de uma figurinha pequena (P) normal;
+ *  se a grade não couber na página, encolhe tudo na mesma proporção. */
+function mosaicWidth(cols: number, rows: number, landscape: boolean): number {
+  const piece = landscape ? 21 * 0.72 : 21; // % da largura da página, como `slotFor('P')` do editor
+  const pageH = landscape ? 100 / 1.38 : 138; // altura da página em % da largura
+  const naturalW = cols * piece;
+  const naturalH = rows * piece * (4 / 3);
+  return Math.round(naturalW * Math.min(1, 92 / naturalW, (pageH * 0.8) / naturalH) * 10) / 10;
+}
+
 export function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail; onOpen: (slot: Slot) => void; lastPasted: number | null }) {
   const { org } = detail;
   const filled = detail.slots.filter((s) => s.filled).length;
@@ -74,7 +84,10 @@ export function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail;
       </header>
       <div
         className="mosaic"
-        style={{ gridTemplateColumns: `repeat(${org.mosaic_cols}, 1fr)`, gridTemplateRows: `repeat(${org.mosaic_rows}, 1fr)`, aspectRatio: `${2} / ${3}` }}
+        style={{
+          gridTemplateColumns: `repeat(${org.mosaic_cols}, 1fr)`, gridTemplateRows: `repeat(${org.mosaic_rows}, 1fr)`,
+          aspectRatio: `${3 * org.mosaic_cols} / ${4 * org.mosaic_rows}`, width: `${mosaicWidth(org.mosaic_cols, org.mosaic_rows, detail.orientation === 'landscape')}%`,
+        }}
       >
         {org.mosaic_image_url ? <img className="mosaic-faded" src={org.mosaic_image_url} alt="" loading="lazy" /> : null}
         {detail.slots.map((slot) => {
@@ -91,13 +104,13 @@ export function MosaicPage({ detail, onOpen, lastPasted }: { detail: PageDetail;
               aria-label={slot.filled ? `Peça ${index + 1} colada` : `Peça ${index + 1}, espaço ${slot.number}`}
               className={`mosaic-piece${slot.filled ? ' filled' : ''}${lastPasted === slot.sticker_id ? ' just-pasted' : ''}`}
               style={
-                slot.filled
+                slot.filled && !(slot.card?.image_url && slot.sticker_id > 0)
                   ? { backgroundImage: `url(${org.mosaic_image_url})`, backgroundSize: `${org.mosaic_cols * 100}% ${org.mosaic_rows * 100}%`, backgroundPosition: `${x}% ${y}%` }
                   : undefined
               }
               onClick={() => onOpen(slot)}
             >
-              {slot.filled ? null : <b>{slot.number}</b>}
+              {slot.filled ? (slot.card?.image_url && slot.sticker_id > 0 ? <img src={slot.card.image_url} alt="" draggable={false} /> : null) : <b>{slot.number}</b>}
             </button>
           );
         })}

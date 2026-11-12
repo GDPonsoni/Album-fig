@@ -64,11 +64,11 @@ cd backend && .venv/bin/python ../dev/load.py 50 5 2
 
 **Parâmetros por álbum:** o `Config` é o padrão global; `album_config` sobrescreve por álbum (gaveta, boas-vindas, premium, validade de troca). Os tipos de pacote são copiados, com pesos explícitos, para cada álbum novo. Mudar o peso global de uma raridade depois não altera álbuns existentes.
 
-**Congelamento:** com o álbum em andamento só texto, imagem e layout mudam; não se cria, remove, renumera nem muda a raridade de figurinha. Álbum encerrado não muda nada. Figurinha com inventário ou histórico não pode ser apagada.
+**Congelamento:** com o álbum em andamento texto, imagem e layout mudam e dá para **acrescentar figurinhas** pelo editor (entram no próximo número livre, com a raridade escolhida na publicação, e passam a sair nos pacotes); não se remove, desativa, renumera nem muda a raridade de figurinha existente, e o mosaico não é criado nem muda de grade. Álbum encerrado não muda nada. Figurinha com inventário ou histórico não pode ser apagada.
 
 **Fluxo de publicação:**
 
-1. O superadmin concede o papel de editor de um capítulo por e-mail (precisa do 2FA ativo). O papel é conferido no banco a cada requisição, então revogar vale na hora.
+1. O superadmin concede, por e-mail e por capítulo, o papel de **editor** (escreve) ou de **revisor** (aprova, rejeita, publica e desfaz as revisões daquele capítulo, sem ser superadmin; só vê a fila dele, não julga a revisão que ele mesmo escreveu e também precisa do 2FA). O papel é conferido no banco a cada requisição, então revogar vale na hora.
 2. O editor escreve um **rascunho** (um por capítulo) e envia. Rascunho é um documento JSON validado: sem número, raridade ou URL de imagem; links só `https`; imagens só as enviadas por ele ao próprio capítulo (reencodadas em WebP, privadas até a publicação).
 3. O superadmin vê a fila em `/admin/revisoes`, com diff, imagens lado a lado e prévia do publicado e do proposto, e **aprova** ou **rejeita** com nota (rejeitada volta a ser editável).
 4. **Publicar** aplica a revisão aprovada numa transação, escolhendo número e raridade das figurinhas novas (padrão: próximo número livre; raridade sugerida pelo editor ou a mais comum). A API do editor nunca escreve nas tabelas de produção; esse é o único caminho.
@@ -86,7 +86,7 @@ python -m app.cli purge-campaign --all-accounts --confirm      # todas as contas
 python -m app.cli reset-2fa voce@exemplo.com
 ```
 
-**Migrações:** `0004` (álbuns, sem perda de dados: a campanha existente vira o álbum "Calourada"), `0005` (figurinha com histórico não some), `0006` (remove colunas antigas), `0007` (papéis, revisões, 2FA). Todas sobem e descem; `downgrade` da `0004` recusa se houver mais de um álbum. Teste sempre numa cópia: rode `seed-demo`, `alembic upgrade head` e `alembic downgrade -1`.
+**Migrações:** `0004` (álbuns, sem perda de dados: a campanha existente vira o álbum "Calourada"), `0005` (figurinha com histórico não some), `0006` (remove colunas antigas), `0007` (papéis, revisões, 2FA), `0008` (papel de revisor). Todas sobem e descem; `downgrade` da `0004` recusa se houver mais de um álbum. Teste sempre numa cópia: rode `seed-demo`, `alembic upgrade head` e `alembic downgrade -1`.
 
 ## Produção
 

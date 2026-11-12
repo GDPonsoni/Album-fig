@@ -25,7 +25,7 @@ EDITABLE = ("draft", "rejected")
 MAX_STICKERS = 200
 MAX_PAGES = 30
 COSMETIC = ("name", "image_url", "size", "tag", "hint", "back_text", "back_links", "page_no", "slot_layout")
-FROZEN = "Com o álbum em andamento a estrutura fica congelada"
+FROZEN = "Com o álbum em andamento a estrutura fica congelada (só dá para acrescentar figurinhas)"
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏‪-‮⁦-⁩]")
 _HOST = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
@@ -278,15 +278,13 @@ def production_content(db: Session, chapter: AlbumChapter) -> dict:
 
 
 def structural_problems(db: Session, chapter: AlbumChapter, content: Content) -> list[str]:
-    """O que o conteúdo mudaria na ESTRUTURA do capítulo (figurinha nova, removida, desativada,
-    mosaico refeito). Com o álbum em andamento, qualquer item aqui barra a publicação."""
+    """O que o conteúdo mudaria na ESTRUTURA do capítulo (figurinha removida ou desativada,
+    mosaico refeito). Com o álbum em andamento, qualquer item aqui barra a publicação.
+    Figurinha NOVA é permitida: ganha o próximo número livre e entra nos pacotes dali em diante."""
     existing = {s.content_key: s for s in _production_stickers(db, chapter)}
     wanted = {s.key: s for s in content.stickers}
     problems = []
-    added = [wanted[key].name for key in wanted if key not in existing]
     removed = [existing[key].name for key in existing if key not in wanted]
-    if added:
-        problems.append("figurinha nova: " + ", ".join(added[:5]))
     if removed:
         problems.append("figurinha removida: " + ", ".join(removed[:5]))
     toggled = [wanted[key].name for key in wanted if key in existing and wanted[key].active != existing[key].active]
@@ -487,6 +485,11 @@ def save_draft(db: Session, user: User, chapter: AlbumChapter, data: Any) -> Cha
     revision.status = "draft"  # rejeitada volta a ser rascunho quando o editor mexe
     revision.content = content.model_dump(mode="json")
     revision.author_id = user.id
+    if user.id not in (revision.contributors or []):
+        # Quem mexeu neste rascunho fica registrado (e auditado só na primeira vez, não a cada autosave).
+        db.flush()
+        revision.contributors = [*(revision.contributors or []), user.id]
+        audit(db, user.id, "revision.edit", revision_id=revision.id, chapter_id=chapter.id, number=revision.number)
     revision.updated_at = now()
     db.flush()
     return revision
@@ -505,9 +508,33 @@ def submit(db: Session, user: User, chapter: AlbumChapter) -> ChapterRevision:
     return revision
 
 
+def withdraw(db: Session, user: User, chapter: AlbumChapter) -> ChapterRevision:
+    """O editor desfaz o envio (enviada ou já aprovada, mas ainda não publicada): volta a rascunho,
+    com o mesmo conteúdo, para editar de novo. Publicada ou encerrada não volta."""
+    _album(db, chapter)
+    revision = db.scalar(
+        select(ChapterRevision)
+        .where(ChapterRevision.chapter_id == chapter.id, ChapterRevision.status.in_(OPEN))
+        .with_for_update()
+    )
+    if revision is None or revision.status not in ("submitted", "approved"):
+        raise HTTPException(409, "Não há envio para retirar.")
+    was = revision.status
+    revision.status = "draft"
+    revision.submitted_at = None
+    revision.reviewed_by = None
+    revision.reviewed_at = None
+    revision.review_note = ""
+    revision.updated_at = now()
+    audit(db, user.id, "revision.withdraw", revision_id=revision.id, chapter_id=chapter.id, was=was)
+    return revision
+
+
 def review(db: Session, admin: User, revision: ChapterRevision, approve: bool, note: str) -> ChapterRevision:
     if revision.status != "submitted":
         raise HTTPException(409, "Só revisão enviada pode ser aprovada ou rejeitada.")
+    if not admin.is_admin and revision.author_id == admin.id:
+        raise HTTPException(403, "Quem escreveu a revisão não pode julgá-la.")
     if not approve and not note.strip():
         raise HTTPException(400, "Explique o motivo da rejeição para quem vai corrigir.")
     revision.status = "approved" if approve else "rejected"

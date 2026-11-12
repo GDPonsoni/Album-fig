@@ -4,6 +4,7 @@ import { api, post, type AssetView, type ChapterContent, type ContentPage, type 
 import { MosaicPage, StickerPage } from '../components/AlbumPages';
 import { ImageCropper, type CropSpec } from '../components/ImageCropper';
 import { Message } from '../components/ui';
+import { StickerSheet } from '../components/StickerSheet';
 import { contentToPages, gridSlots } from '../preview';
 
 type Row = Record<string, any>;
@@ -28,10 +29,11 @@ const LAYOUTS: [string, string][] = [
 const SIZE_W = { P: 21, M: 28, G: 42 };
 const MAX_LINKS = 5;
 
-function crop(kind: 'sticker' | 'background' | 'mosaic' | 'logo', landscape: boolean): CropSpec {
+function crop(kind: 'sticker' | 'background' | 'mosaic' | 'logo', landscape: boolean, grid = { cols: 2, rows: 3 }): CropSpec {
   if (kind === 'logo') return { width: 480, height: 480, type: 'image/png', label: 'o logo' };
   if (kind === 'sticker') return { width: 480, height: 640, type: 'image/png', label: 'a figurinha' };
-  if (kind === 'mosaic') return { width: 800, height: 1200, type: 'image/jpeg', label: 'o mosaico' };
+  // Cada peça é uma figurinha 3:4: a imagem inteira tem a proporção (3 x colunas) : (4 x linhas).
+  if (kind === 'mosaic') return { width: 300 * grid.cols, height: 400 * grid.rows, type: 'image/jpeg', label: 'o mosaico' };
   return landscape
     ? { width: 1380, height: 1000, type: 'image/jpeg', label: 'o fundo da página' }
     : { width: 1000, height: 1380, type: 'image/jpeg', label: 'o fundo da página' };
@@ -209,6 +211,7 @@ export function EditorChapter() {
   const [assets, setAssets] = useState<AssetView[]>([]);
   const [revision, setRevision] = useState<Row | null>(null);
   const [editable, setEditable] = useState(true);
+  const [inspect, setInspect] = useState<string | null>(null);
   const [tab, setTab] = useState<'pages' | 'mosaic' | 'general'>('pages');
   const [pageIndex, setPageIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
@@ -303,7 +306,9 @@ export function EditorChapter() {
   if (!draft || !content) return <div className="screen"><div className="album-skeleton" /></div>;
 
   const { chapter, rarities } = draft;
-  const frozen = chapter.frozen; // álbum em andamento: só o cosmético muda
+  const frozen = chapter.frozen; // álbum em andamento: só o cosmético muda e figurinha nova entra
+  const published = new Set(draft.published.stickers.map((sticker) => sticker.key));
+  const fixed = (key: string) => frozen && published.has(key); // já em produção: raridade, ativa e remoção congeladas
   const locked = !editable;
   const landscape = content.layout.orientation === 'landscape';
   const page = pages[Math.min(pageIndex, pages.length - 1)];
@@ -403,6 +408,19 @@ export function EditorChapter() {
     }
   };
 
+  const withdraw = async () => {
+    setError('');
+    setNote('');
+    try {
+      const result = await post<{ revision: Row }>(`${base}/withdraw`);
+      setRevision(result.revision);
+      setEditable(!chapter.closed);
+      setNote('Envio retirado. O rascunho voltou a ficar editável.');
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const saveLabel = {
     idle: revision ? 'Tudo salvo' : 'Nada alterado ainda',
     dirty: 'Salvando em instantes…',
@@ -436,8 +454,13 @@ export function EditorChapter() {
   return (
     <div className="editor">
       {cropping ? (
-        <ImageCropper file={cropping.file} spec={crop(cropping.kind, landscape)} onDone={uploadCropped} onCancel={() => setCropping(null)} />
+        <ImageCropper file={cropping.file} spec={crop(cropping.kind, landscape, { cols: mosaic?.cols ?? 2, rows: mosaic?.rows ?? 3 })} onDone={uploadCropped} onCancel={() => setCropping(null)} />
       ) : null}
+      {inspect ? (() => {
+        const sticker = content.stickers.find((item) => item.key === inspect);
+        const card = details.flatMap((p) => p.slots).find((slot) => sticker && slot.card && slot.card.id === -(content.stickers.indexOf(sticker) + 1))?.card;
+        return sticker && card ? <StickerSheet card={card} preview={{ back_text: sticker.back_text, back_links: sticker.back_links }} onClose={() => setInspect(null)} /> : null;
+      })() : null}
       <header className="editor-top">
         <Link to="/conta" className="editor-back">← Sair do editor</Link>
         <div>
@@ -448,7 +471,7 @@ export function EditorChapter() {
 
       {revision?.review_note ? <p className="review-note"><b>Nota da revisão:</b> {revision.review_note}</p> : null}
       {chapter.closed ? <p className="notice">Álbum encerrado: o capítulo não pode mais mudar.</p> : null}
-      {frozen && !chapter.closed ? <p className="notice">O álbum já começou: você pode mudar textos, imagens e posições, mas não criar nem remover figurinhas.</p> : null}
+      {frozen && !chapter.closed ? <p className="notice">O álbum já começou: você pode mudar textos, imagens e posições e acrescentar figurinhas novas (número e raridade final são de quem publica), mas não remover nem desativar as que já existem.</p> : null}
       {locked && !chapter.closed ? <p className="notice">{revision ? STATUS[revision.status] : 'Somente leitura'}.</p> : null}
       <Message>{error}</Message>
       {note ? <Message kind="ok">{note}</Message> : null}
@@ -484,7 +507,7 @@ export function EditorChapter() {
           <div className="editor-inspector">
             <div className="admin-head">
               <h2>Figurinhas desta página ({onPage.length})</h2>
-              <button type="button" className="btn" disabled={locked || frozen || content.stickers.length >= 200} onClick={addSticker}>+ Figurinha</button>
+              <button type="button" className="btn" disabled={locked || content.stickers.length >= 200} onClick={addSticker}>+ Figurinha</button>
             </div>
             {onPage.length ? (
               <ul className="editor-stickers">
@@ -544,14 +567,15 @@ export function EditorChapter() {
                     </select>
                   </label>
                   <label className="field"><span>Raridade sugerida</span>
-                    <select disabled={locked || frozen} value={current.suggested_rarity_id ?? ''} onChange={(e) => setSticker(current.key, { suggested_rarity_id: e.target.value ? Number(e.target.value) : null })}>
+                    <select disabled={locked || fixed(current.key)} value={current.suggested_rarity_id ?? ''} onChange={(e) => setSticker(current.key, { suggested_rarity_id: e.target.value ? Number(e.target.value) : null })}>
                       <option value="">Sem sugestão</option>
                       {rarities.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                     <small>É só uma sugestão: quem publica decide a raridade e o número.</small>
                   </label>
-                  <label className="field check"><input type="checkbox" disabled={locked || frozen} checked={current.active} onChange={(e) => setSticker(current.key, { active: e.target.checked })} /> <span>Aparece na página e nos pacotes</span></label>
-                  {!frozen ? <button type="button" className="link danger" disabled={locked} onClick={() => removeSticker(current.key)}>Remover figurinha</button> : null}
+                  <label className="field check"><input type="checkbox" disabled={locked || fixed(current.key)} checked={current.active} onChange={(e) => setSticker(current.key, { active: e.target.checked })} /> <span>Aparece na página e nos pacotes</span></label>
+                  <button type="button" className="btn" onClick={() => setInspect(current.key)}>Ver como o jogador vê</button>
+                  {!fixed(current.key) ? <button type="button" className="link danger" disabled={locked} onClick={() => removeSticker(current.key)}>Remover figurinha</button> : null}
                 </details>
               </section>
             ) : (
@@ -597,7 +621,7 @@ export function EditorChapter() {
           <div className="editor-inspector">
             <section className="panel paper inspector">
               <h2>Mosaico</h2>
-              <p className="muted">Uma imagem grande cortada em peças. Cada peça vira uma figurinha que os jogadores juntam para formar a imagem.</p>
+              <p className="muted">Uma imagem grande cortada em peças do tamanho de uma figurinha normal. Ao mudar colunas ou linhas, use Reposicionar para reenquadrar a imagem.</p>
               <div className="photo-actions row">
                 <PickButton primary label={mosaic?.asset_id ? 'Trocar imagem' : 'Escolher imagem'} disabled={locked || (frozen && mosaic?.asset_id == null)} onPick={pickMosaic} />
                 {mosaic?.asset_id ? <button type="button" className="btn" disabled={locked} onClick={repositionMosaic}>Reposicionar</button> : null}
@@ -663,6 +687,9 @@ export function EditorChapter() {
       <footer className="editor-bar">
         <span className={`save-state save-${save.state}`} role="status">{saveLabel}</span>
         {save.state === 'error' ? <button className="btn" onClick={persist}>Tentar de novo</button> : null}
+        {locked && !chapter.closed && revision && (revision.status === 'submitted' || revision.status === 'approved') ? (
+          <button className="btn" onClick={() => window.confirm('Retirar o envio? A revisão sai da fila e você pode editar de novo.') && withdraw()}>Retirar envio</button>
+        ) : null}
         <button className="btn btn-primary" disabled={locked || save.state === 'saving' || (!revision && save.state === 'idle')} onClick={submit}>Enviar para revisão</button>
       </footer>
     </div>

@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import SESSION_COOKIE, admin_user, current_session, current_user, hash_token, start_session
+from app.api.deps import (
+    SESSION_COOKIE, current_session, current_user, hash_token, promoter_grant, reviewer_chapter_ids, staff_user, start_session,
+)
 from app.db import get_db
 from app.models import EmailToken, RoleGrant, User, UserSession
 from app.services import mfa
@@ -227,10 +229,12 @@ def me(user: User = Depends(current_user), session: UserSession = Depends(curren
     # Quantos capítulos a pessoa edita agora: é o que faz a área do editor aparecer.
     view["editor_chapters"] = db.scalar(
         select(func.count()).select_from(RoleGrant).where(
-            RoleGrant.user_id == user.id, RoleGrant.revoked_at.is_(None),
+            RoleGrant.user_id == user.id, RoleGrant.role == "editor", RoleGrant.revoked_at.is_(None),
             (RoleGrant.expires_at.is_(None)) | (RoleGrant.expires_at > now()),
         )
     ) or 0
+    view["reviewer_chapters"] = len(reviewer_chapter_ids(db, user))
+    view["promoter"] = promoter_grant(db, user.id) is not None
     return view
 
 
@@ -251,7 +255,7 @@ def _check_password(user: User, password: str) -> None:
 
 
 @router.post("/2fa/setup")
-def mfa_setup(body: PasswordIn, user: User = Depends(admin_user), db: Session = Depends(get_db)):
+def mfa_setup(body: PasswordIn, user: User = Depends(staff_user), db: Session = Depends(get_db)):
     """Gera o segredo para o app autenticador. Pede a senha: sessão aberta sozinha não basta."""
     _check_password(user, body.password)
     data = mfa.begin_setup(db, user)
@@ -261,7 +265,7 @@ def mfa_setup(body: PasswordIn, user: User = Depends(admin_user), db: Session = 
 
 @router.post("/2fa/enable")
 def mfa_enable(
-    body: CodeIn, user: User = Depends(admin_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
+    body: CodeIn, user: User = Depends(staff_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
 ):
     codes = mfa.enable(db, user, session, body.code)
     db.commit()
@@ -270,7 +274,7 @@ def mfa_enable(
 
 @router.post("/2fa/verify")
 def mfa_verify(
-    body: CodeIn, user: User = Depends(admin_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
+    body: CodeIn, user: User = Depends(staff_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
 ):
     method = mfa.verify(db, user, session, body.code)
     left = mfa.recovery_left(db, user)
@@ -280,7 +284,7 @@ def mfa_verify(
 
 @router.post("/2fa/disable")
 def mfa_disable(
-    body: PasswordIn, user: User = Depends(admin_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
+    body: PasswordIn, user: User = Depends(staff_user), session: UserSession = Depends(current_session), db: Session = Depends(get_db)
 ):
     """Desligar pede a senha e o segundo fator confirmado nesta sessão."""
     _check_password(user, body.password)

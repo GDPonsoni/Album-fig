@@ -70,6 +70,27 @@ def delete_sticker(db: Session, sticker: Sticker) -> None:
     remove_media_if_unused(db, image)
 
 
+def _mosaic_tiles(image: Image.Image, cols: int, rows: int) -> list[Image.Image]:
+    """Recorta a imagem em cols x rows peças, todas na proporção 3:4 das figurinhas normais.
+    Se a imagem não tem a proporção (3*cols):(4*rows), corta as sobras do centro antes de dividir."""
+    image = image.convert("RGBA")
+    target = (3 * cols) / (4 * rows)
+    if image.width / image.height > target:
+        width = round(image.height * target)
+        left = (image.width - width) // 2
+        image = image.crop((left, 0, left + width, image.height))
+    else:
+        height = round(image.width / target)
+        top = (image.height - height) // 2
+        image = image.crop((0, top, image.width, top + height))
+    width, height = image.width / cols, image.height / rows
+    return [
+        image.crop((round(c * width), round(r * height), round((c + 1) * width), round((r + 1) * height)))
+        for r in range(rows)
+        for c in range(cols)
+    ]
+
+
 def generate_mosaic(db: Session, chapter: AlbumChapter, cols: int, rows: int, rarity_id: int) -> list[Sticker]:
     """Corta a imagem do mosaico em peças e substitui as peças antigas do capítulo."""
     source = read_media(chapter.mosaic_image_url)
@@ -88,13 +109,7 @@ def generate_mosaic(db: Session, chapter: AlbumChapter, cols: int, rows: int, ra
     number = next_number(db, chapter.album_id)
     pieces = []
     with Image.open(io.BytesIO(source)) as image:
-        image = image.convert("RGBA")
-        width, height = image.width / cols, image.height / rows
-        for index in range(cols * rows):
-            col, row = index % cols, index // cols
-            crop = image.crop(
-                (round(col * width), round(row * height), round((col + 1) * width), round((row + 1) * height))
-            )
+        for index, crop in enumerate(_mosaic_tiles(image, cols, rows)):
             piece = Sticker(
                 album_id=chapter.album_id,
                 org_id=org.id,
@@ -132,12 +147,10 @@ def recut_mosaic(db: Session, chapter: AlbumChapter) -> None:
     cols, rows = chapter.mosaic_cols, chapter.mosaic_rows
     old_images = []
     with Image.open(io.BytesIO(source)) as image:
-        image = image.convert("RGBA")
-        width, height = image.width / cols, image.height / rows
+        tiles = _mosaic_tiles(image, cols, rows)
         for piece in pieces:
             index = piece.mosaic_index or 0
-            col, row = index % cols, index // cols
-            crop = image.crop((round(col * width), round(row * height), round((col + 1) * width), round((row + 1) * height)))
+            crop = tiles[index]
             old_images.append(piece.image_url)
             piece.image_url = save_webp(crop, f"orgs/{chapter.org.name}/pecas/peca {index + 1:02d}", 500)
     db.flush()
