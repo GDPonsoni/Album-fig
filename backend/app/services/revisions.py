@@ -137,6 +137,9 @@ class MosaicC(Strict):
     asset_id: int | None = None
     cols: int = Field(ge=1, le=10)
     rows: int = Field(ge=1, le=10)
+    # Como o mosaico aparece na página: tamanho (1 = o padrão, que cabe na página) e giro em graus. Só visual.
+    scale: float = Field(default=1, ge=0.4, le=1.6)
+    rot: float = Field(default=0, ge=-180, le=180)
     # Peça que não aparece aqui fica como está em produção.
     pieces: list[PieceC] = Field(default_factory=list, max_length=100)
     # Imagem original (privada, só do editor) e o enquadramento que gerou `asset_id`. Não vão para produção.
@@ -278,6 +281,8 @@ def production_content(db: Session, chapter: AlbumChapter) -> dict:
             "asset_id": _asset_for(db, chapter, chapter.mosaic_image_url, "mosaic"),
             "cols": chapter.mosaic_cols,
             "rows": chapter.mosaic_rows,
+            "scale": (layout.get("mosaic") or {}).get("scale", 1),
+            "rot": (layout.get("mosaic") or {}).get("rot", 0),
             "pieces": [
                 {
                     "index": p.mosaic_index, "name": p.name, "hint": p.hint, "back_text": p.back_text,
@@ -450,6 +455,8 @@ def apply_content(
             for page in sorted(content.pages, key=lambda p: p.page_no)
         ],
     }
+    if content.mosaic is not None:
+        chapter.layout["mosaic"] = {"scale": content.mosaic.scale, "rot": content.mosaic.rot}
     db.flush()
     _apply_mosaic(db, chapter, content, url, mosaic_rarity_id or default_rarity)
 
@@ -724,9 +731,9 @@ def diff(db: Session, chapter: AlbumChapter, proposed: dict) -> dict:
             }
             if fields:
                 piece_changes.append({"index": piece["index"], "fields": fields})
-        new_mosaic = {k: new_mosaic.get(k) for k in ("asset_id", "cols", "rows")}
+        new_mosaic = {k: new_mosaic.get(k) for k in ("asset_id", "cols", "rows", "scale", "rot")}
     if old_mosaic:
-        old_mosaic = {k: old_mosaic.get(k) for k in ("asset_id", "cols", "rows")}
+        old_mosaic = {k: old_mosaic.get(k) for k in ("asset_id", "cols", "rows", "scale", "rot")}
     mosaic = None
     if old_mosaic != new_mosaic:
         mosaic = {

@@ -106,6 +106,7 @@ function Diff({ diff }: { diff: Row }) {
           <h4>Mosaico</h4>
           <ul>
             <Change label="image" change={{ old: diff.mosaic.old?.image_url ?? null, new: diff.mosaic.new?.image_url ?? null }} />
+            <li className="diff-field"><b>Tamanho e giro</b><span><del>{Math.round((diff.mosaic.old?.scale ?? 1) * 100)}% · {diff.mosaic.old?.rot ?? 0}°</del> <ins>{Math.round((diff.mosaic.new?.scale ?? 1) * 100)}% · {diff.mosaic.new?.rot ?? 0}°</ins></span></li>
             <li className="diff-field"><b>Grade</b><span><del>{diff.mosaic.old ? `${diff.mosaic.old.cols}x${diff.mosaic.old.rows}` : '(sem mosaico)'}</del> <ins>{diff.mosaic.new ? `${diff.mosaic.new.cols}x${diff.mosaic.new.rows}` : '(sem mosaico)'}</ins></span></li>
           </ul>
         </div>
