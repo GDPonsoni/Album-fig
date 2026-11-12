@@ -39,10 +39,11 @@ button:disabled { cursor: default; }
 /* ---- Estrutura ---- */
 .shell { height: 100dvh; display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; }
 .shell-main { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: pan-y; }
-.pager { position: absolute; inset: 0; will-change: transform; }
-.pane { position: absolute; inset: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; }
-.pane-prev { left: -100%; }
-.pane-next { left: 100%; }
+.pager { position: absolute; inset: 0; }
+.pager.moving { will-change: transform; }
+.pane { position: absolute; inset: 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
+.pane-prev { left: -100%; right: 100%; }
+.pane-next { left: 100%; right: -100%; }
 .pane-prev, .pane-next { pointer-events: none; }
 .enter-next { animation: enter-next 0.26s cubic-bezier(.2,.8,.3,1) both; }
 .enter-prev { animation: enter-prev 0.26s cubic-bezier(.2,.8,.3,1) both; }
@@ -380,7 +381,7 @@ button:disabled { cursor: default; }
   justify-content: center;
   gap: 14px;
   padding: 18px;
-  background: rgb(12 17 30 / 0.96);
+  background: rgb(12 17 30 / 0.99);
   color: #fff;
 }
 .flip { position: relative; width: min(78vw, 320px); aspect-ratio: 3 / 4; perspective: 1000px; transform-style: preserve-3d; transition: transform 0.5s; }
@@ -499,7 +500,7 @@ button:disabled { cursor: default; }
 .code-form input { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: 15px; letter-spacing: 0.02em; }
 
 /* Abertura */
-.opener { overflow-y: auto; touch-action: manipulation; }
+.opener { overflow-y: auto; touch-action: manipulation; background: #0c111e; }
 .tear-area { position: relative; width: min(62vw, 240px); aspect-ratio: 3 / 4; cursor: pointer; touch-action: none; }
 .foil-strip, .foil-body { position: absolute; inset: 0; }
 .foil-strip { clip-path: inset(0 0 84% 0); transition: transform 0.5s cubic-bezier(.4,.1,.5,1), opacity 0.5s; }
@@ -529,6 +530,9 @@ button:disabled { cursor: default; }
 .opener-summary h2 { font: 400 1.7rem/1.1 var(--display); margin-top: 8px; }
 .summary-grid { width: 100%; max-width: 420px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px 12px; padding: 8px; }
 .summary-item { position: relative; aspect-ratio: 3 / 4; }
+.drop-item { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; font: inherit; color: inherit; transition: transform 0.12s; }
+.drop-item:active { transform: scale(0.95); }
+.drop-tip { text-align: center; margin: -4px 0 0; color: #b8c1d6; }
 .summary-item .seal-new, .summary-item .seal-dup { font-size: 0.62rem; top: -6px; left: -4px; padding: 0 7px; }
 .opener-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 320px; }
 /* Pacote: balança parado, treme e estoura em luz ao rasgar; raras ganham brilho. */

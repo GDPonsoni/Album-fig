@@ -120,7 +120,7 @@ Seguimos [Conventional Commits](https://www.conventionalcommits.org/pt-br/): `ti
 
 ## Regras do jogo
 
-- O timer da gaveta é um ciclo único por jogador e nunca para. Abrir um pacote não mexe nele, e o ciclo que termina com a gaveta cheia não entrega nada.
+- O timer da gaveta só corre enquanto há espaço livre. Com a gaveta cheia ele para, e recomeça do zero quando um pacote é aberto.
 - O tempo fora do app conta, até encher a gaveta. Pacotes de código ficam fora dela.
 - Em dia de premium, o primeiro pacote entregue no dia é o premium.
 - Repetida é tudo além de 1 exemplar, colado ou não; esse exemplar nunca pode ser trocado.
@@ -131,7 +131,7 @@ Seguimos [Conventional Commits](https://www.conventionalcommits.org/pt-br/): `ti
 
 Campos que não são óbvios pelo nome:
 
-- `album_participation.next_pack_at`: fim do ciclo atual do timer da gaveta, por jogador e por álbum.
+- `album_participation.next_pack_at`: fim do ciclo atual do timer da gaveta, por jogador e por álbum (nulo com a gaveta cheia).
 - `album_participation.last_daily_grant_on`: dia da última entrega, usado no premium e nos pacotes de boas-vindas.
 - `album_participation.final_stats`: resumo gravado uma vez no fechamento do álbum.
 - `album_chapter`: a org dentro de um álbum; guarda a ordem, o mosaico, o layout publicado e a revisão no ar.

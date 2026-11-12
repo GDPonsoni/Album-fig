@@ -164,7 +164,7 @@ class AlbumParticipation(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), primary_key=True)
     album_id: Mapped[int] = mapped_column(ForeignKey("album.id", ondelete="CASCADE"), primary_key=True, index=True)
     joined_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
-    next_pack_at: Mapped[datetime | None] = mapped_column(Timestamp)  # fim do ciclo atual; nulo só antes do primeiro acerto
+    next_pack_at: Mapped[datetime | None] = mapped_column(Timestamp)  # fim do ciclo atual; nulo antes do primeiro acerto e com a gaveta cheia (timer parado)
     last_daily_grant_on: Mapped[date | None] = mapped_column(Date)
     final_stats: Mapped[dict[str, Any] | None] = mapped_column(Json)  # preenchido uma vez, no fechamento
 

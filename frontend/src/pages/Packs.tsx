@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useShell } from '../components/Layout';
+import { StickerSheet } from '../components/StickerSheet';
 import { api, post, type AlbumInfo, type Card, type GrantView } from '../api';
 import { useAuth } from '../auth';
 import { Message, StickerArt, VerifyBanner } from '../components/ui';
@@ -69,6 +70,25 @@ function Wrapper({ grant }: { grant: GrantView }) {
   );
 }
 
+/** Figurinhas de um pacote; tocar em uma abre ela ampliada. */
+function DropGrid({ items, className }: { items: Drawn[]; className: string }) {
+  const [viewing, setViewing] = useState<Drawn | null>(null);
+  const close = useCallback(() => setViewing(null), []);
+  return (
+    <>
+      <div className={className}>
+        {items.map((item, i) => (
+          <button key={i} className="summary-item drop-item" aria-label={`Ver ${item.name}`} onClick={() => setViewing(item)}>
+            <StickerArt card={item} />
+            <em className={item.is_new ? 'seal-new' : 'seal-dup'}>{item.is_new ? 'Nova' : 'Repetida'}</em>
+          </button>
+        ))}
+      </div>
+      {viewing ? <StickerSheet card={viewing} pasted={false} onClose={close} /> : null}
+    </>
+  );
+}
+
 function Opener({ grant, onClose, onNext, onOpened }: { grant: GrantView; onClose: () => void; onNext: (() => void) | null; onOpened: (opening: Opening) => void }) {
   const [stage, setStage] = useState<'sealed' | 'tearing' | 'reveal' | 'summary'>('sealed');
   const [items, setItems] = useState<Drawn[]>([]);
@@ -126,14 +146,8 @@ function Opener({ grant, onClose, onNext, onOpened }: { grant: GrantView; onClos
       <div className="overlay opener opener-summary">
         <h2>{fresh ? `${fresh} ${fresh === 1 ? 'nova' : 'novas'}!` : 'Só repetidas desta vez'}</h2>
         <p>{items.length - fresh ? `${items.length - fresh} repetida(s) para trocar` : 'Nenhuma repetida'}</p>
-        <div className="summary-grid">
-          {items.map((item, i) => (
-            <div key={i} className="summary-item">
-              <StickerArt card={item} />
-              <em className={item.is_new ? 'seal-new' : 'seal-dup'}>{item.is_new ? 'Nova' : 'Repetida'}</em>
-            </div>
-          ))}
-        </div>
+        <DropGrid items={items} className="summary-grid" />
+        <p className="muted drop-tip">Toque em uma figurinha para ver ampliada.</p>
         <div className="opener-actions">
           <Link className="btn btn-primary" to="/">Colar no álbum</Link>
           {onNext ? <button className="btn" onClick={onNext}>Abrir outro</button> : null}
@@ -234,7 +248,7 @@ function Drawer({ data, left, disabled, onOpen }: { data: Stock; left: number | 
         </ul>
         <p className="drawer-note">
           {empty === 0
-            ? `Gaveta cheia. Próximo pacote${data.next_pack_kind?.is_premium ? ' (premium)' : ''} em ${left === null ? '…' : formatCountdown(left)}, se abrir espaço até lá.`
+            ? 'Gaveta cheia. A contagem do próximo pacote só começa quando você abrir um.'
             : empty > 1
               ? 'Cada pacote entregue já começa a contagem do próximo.'
               : 'Quando este chegar, a gaveta fica cheia.'}
@@ -269,14 +283,7 @@ function History({ openings }: { openings: Opening[] }) {
                 <strong>{opening.pack.name}</strong>
                 <small>{when(opening.opened_at)} · {fresh ? `${fresh} ${fresh === 1 ? 'nova' : 'novas'}` : 'só repetidas'}</small>
               </p>
-              <div className="history-grid">
-                {opening.items.map((item, i) => (
-                  <div key={i} className="summary-item">
-                    <StickerArt card={item} />
-                    <em className={item.is_new ? 'seal-new' : 'seal-dup'}>{item.is_new ? 'Nova' : 'Repetida'}</em>
-                  </div>
-                ))}
-              </div>
+              <DropGrid items={opening.items} className="history-grid" />
             </li>
           );
         })}

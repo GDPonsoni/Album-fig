@@ -33,6 +33,9 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
   const navigate = useNavigate();
   const [stock, setStock] = useState(0);
   const [dragging, setDragging] = useState(false);
+  // Segurou o toque por um instante: já monta as vizinhas, para elas estarem prontas quando o arrasto começar.
+  const [armed, setArmed] = useState(false);
+  const armTimer = useRef(0);
   const track = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; y: number; id: number; horizontal: boolean | null } | null>(null);
   const busy = useRef(false);
@@ -62,7 +65,9 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
       track.current.style.transform = '';
     }
     busy.current = false;
+    window.clearTimeout(armTimer.current);
     setDragging(false);
+    setArmed(false);
   };
   useEffect(reset, [location.pathname]);
 
@@ -70,6 +75,8 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
     if (index < 0 || busy.current || event.pointerType === 'mouse') return;
     if ((event.target as HTMLElement).closest(NO_SWIPE)) return;
     gesture.current = { x: event.clientX, y: event.clientY, id: event.pointerId, horizontal: null };
+    window.clearTimeout(armTimer.current);
+    armTimer.current = window.setTimeout(() => setArmed(true), 70);
   };
   const onMove = (event: ReactPointerEvent) => {
     const g = gesture.current;
@@ -95,7 +102,10 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
     const g = gesture.current;
     gesture.current = null;
     const el = track.current;
-    if (!g?.horizontal || !el) return;
+    if (!g?.horizontal || !el) {
+      reset();
+      return;
+    }
     const width = el.clientWidth;
     const dx = event.clientX - g.x;
     const target = dx < 0 ? next : prev;
@@ -116,12 +126,12 @@ export function Layout({ panes = {} }: { panes?: Record<string, ReactNode> }) {
     <ShellContext.Provider value={{ setStock }}>
       <div className="shell">
         <main className="shell-main" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onEnd} onPointerCancel={onEnd}>
-          <div className="pager" ref={track}>
-            {dragging && prev ? <div className="pane pane-prev" aria-hidden="true">{panes[prev]}</div> : null}
+          <div className={`pager${dragging ? ' moving' : ''}`} ref={track}>
+            {(dragging || armed) && prev ? <div className="pane pane-prev" aria-hidden="true">{panes[prev]}</div> : null}
             <div className={`pane${entry.current.cls}`} key={location.pathname}>
               <Outlet />
             </div>
-            {dragging && next ? <div className="pane pane-next" aria-hidden="true">{panes[next]}</div> : null}
+            {(dragging || armed) && next ? <div className="pane pane-next" aria-hidden="true">{panes[next]}</div> : null}
           </div>
         </main>
         <nav className="tabs" aria-label="Principal">

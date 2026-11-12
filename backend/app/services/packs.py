@@ -132,9 +132,9 @@ def next_pack_kind(db: Session, part: AlbumParticipation | None) -> dict | None:
 
 def _settle_drawer(db: Session, part: AlbumParticipation) -> int:
     """Acerta a gaveta de um usuário já travado, no álbum da participação. O timer é
-    um ciclo único que nunca para: abrir pacote não mexe nele, e o ciclo que termina
-    com a gaveta cheia não entrega nada. O tempo fora do app conta. Pacotes de código
-    ficam fora da gaveta."""
+    um ciclo por jogador que só corre enquanto há espaço livre: com a gaveta cheia ele
+    para (`next_pack_at` nulo) e recomeça do zero quando um pacote é aberto. O tempo fora
+    do app conta. Pacotes de código ficam fora da gaveta."""
     current = now()
     album_id = part.album_id
     today = today_local(db, album_id)
@@ -158,14 +158,18 @@ def _settle_drawer(db: Session, part: AlbumParticipation) -> int:
             delivered += 1
         part.last_daily_grant_on = today
 
+    # Gaveta cheia: o timer fica parado. Só volta a contar quando um espaço é liberado.
+    if stock + delivered >= cap:
+        part.next_pack_at = None
+        return delivered
     if part.next_pack_at is None:
         part.next_pack_at = current + interval
     while stock + delivered < cap and part.next_pack_at <= current:
         _deliver(db, part, today)
         delivered += 1
         part.next_pack_at += interval
-    if part.next_pack_at <= current:
-        part.next_pack_at += ((current - part.next_pack_at) // interval + 1) * interval
+    if stock + delivered >= cap:
+        part.next_pack_at = None
     return delivered
 
 
@@ -178,7 +182,7 @@ def refill_drawer(db: Session, user: User) -> int:
         return 0
     part = participation(db, user.id, album.id)
     if part is not None and part.last_daily_grant_on is not None and part.next_pack_at is not None and part.next_pack_at > now():
-        return 0
+        return 0  # timer correndo e ainda não venceu
     lock_user(db, user.id)
     delivered = _settle_drawer(db, get_or_create_participation(db, user.id, album.id))
     db.commit()
