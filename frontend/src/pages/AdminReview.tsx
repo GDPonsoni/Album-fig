@@ -14,7 +14,7 @@ const ALBUM: Record<string, string> = { draft: 'rascunho', scheduled: 'agendado'
 const FIELD: Record<string, string> = {
   name: 'Nome', size: 'Tamanho', tag: 'Categoria', hint: 'Dica', back_text: 'Verso', back_links: 'Links', page_no: 'Página',
   slot: 'Posição', active: 'Ativa', suggested_rarity_id: 'Raridade sugerida', image: 'Imagem', title: 'Título', text: 'Texto',
-  layout: 'Layout', background: 'Fundo',
+  layout: 'Layout', background: 'Fundo', description: 'Descrição', color: 'Cor',
 };
 const ACTION: Record<string, string> = {
   'role.grant': 'Papel concedido', 'role.revoke': 'Papel revogado', 'revision.submit': 'Revisão enviada',
@@ -44,10 +44,16 @@ function Change({ label, change }: { label: string; change: { old: any; new: any
 }
 
 function Diff({ diff }: { diff: Row }) {
-  const empty = !diff.added.length && !diff.removed.length && !diff.changed.length && !diff.pages.length && !diff.mosaic && !diff.orientation;
+  const empty = !diff.added.length && !diff.removed.length && !diff.changed.length && !diff.pages.length && !diff.mosaic && !diff.orientation && !diff.org;
   if (empty) return <p className="muted">Nenhuma diferença em relação ao que está publicado.</p>;
   return (
     <div className="diff">
+      {diff.org ? (
+        <div>
+          <h4>Organização</h4>
+          <ul>{Object.entries(diff.org).map(([field, change]) => <Change key={field} label={field === 'logo' ? 'image' : field} change={change as { old: any; new: any }} />)}</ul>
+        </div>
+      ) : null}
       {diff.orientation ? <p><b>Orientação:</b> <del>{diff.orientation.old}</del> <ins>{diff.orientation.new}</ins></p> : null}
       {diff.added.length ? (
         <div>

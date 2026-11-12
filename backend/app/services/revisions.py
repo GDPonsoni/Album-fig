@@ -132,8 +132,18 @@ class StickerC(Strict):
     active: bool = True
 
 
+class OrgC(Strict):
+    """Identidade da organização. Ausente no conteúdo = não mexer (revisões antigas não têm)."""
+
+    name: Name = Field(max_length=120)
+    description: Text = Field(default="", max_length=600)
+    color: str = Field(default="#1d4ed8", pattern=r"^#[0-9a-fA-F]{6}$")
+    logo_asset_id: int | None = None
+
+
 class Content(Strict):
     layout: LayoutC = Field(default_factory=LayoutC)
+    org: OrgC | None = None
     pages: list[PageC] = Field(min_length=1, max_length=MAX_PAGES)
     mosaic: MosaicC | None = None
     stickers: list[StickerC] = Field(default_factory=list, max_length=MAX_STICKERS)
@@ -187,6 +197,8 @@ def check_references(db: Session, chapter: AlbumChapter, content: Content) -> No
     wanted = {s.asset_id for s in content.stickers} | {p.background_asset_id for p in content.pages}
     if content.mosaic is not None:
         wanted.add(content.mosaic.asset_id)
+    if content.org is not None:
+        wanted.add(content.org.logo_asset_id)
     if any(asset_id not in assets for asset_id in wanted - {None}):
         raise HTTPException(422, "Conteúdo inválido: há imagem que não pertence a este capítulo.")
     rarities = set(db.scalars(select(Rarity.id)))
@@ -232,9 +244,14 @@ def production_content(db: Session, chapter: AlbumChapter) -> dict:
             "cols": chapter.mosaic_cols,
             "rows": chapter.mosaic_rows,
         }
+    org = chapter.org
     return {
         "content": {
             "layout": {"orientation": layout.get("orientation", "portrait")},
+            "org": {
+                "name": org.name, "description": org.description, "color": org.theme_color,
+                "logo_asset_id": _asset_for(db, chapter, org.logo_url, "logo"),
+            },
             "pages": pages,
             "mosaic": mosaic,
             "stickers": [
@@ -378,6 +395,11 @@ def apply_content(
                 taken.add(number)
                 row.number = number
 
+    if content.org is not None:
+        chapter.org.name = content.org.name
+        chapter.org.description = content.org.description
+        chapter.org.theme_color = content.org.color
+        chapter.org.logo_url = url(content.org.logo_asset_id)
     chapter.layout = {
         "orientation": content.layout.orientation,
         "pages": [
@@ -394,6 +416,8 @@ def apply_content(
     used = {s.asset_id for s in content.stickers} | {p.background_asset_id for p in content.pages}
     if content.mosaic is not None:
         used.add(content.mosaic.asset_id)
+    if content.org is not None:
+        used.add(content.org.logo_asset_id)
     for asset_id in used - {None}:
         assets[asset_id].status = "approved"  # publicado: a imagem deixa de ser privada
     db.flush()
@@ -609,7 +633,18 @@ def diff(db: Session, chapter: AlbumChapter, proposed: dict) -> dict:
     orientation = None
     if current["layout"] != proposed.get("layout", current["layout"]):
         orientation = {"old": current["layout"]["orientation"], "new": proposed["layout"]["orientation"]}
+    old_org, new_org = current.get("org"), proposed.get("org")
+    org = None
+    if new_org is not None and old_org != new_org:
+        org = {
+            field: {"old": (old_org or {}).get(field), "new": new_org.get(field)}
+            for field in ("name", "description", "color")
+            if (old_org or {}).get(field) != new_org.get(field)
+        }
+        if (old_org or {}).get("logo_asset_id") != new_org.get("logo_asset_id"):
+            org["logo"] = {"old": url((old_org or {}).get("logo_asset_id")), "new": url(new_org.get("logo_asset_id"))}
     return {
+        "org": org or None,
         "added": [view(new[key]) for key in new.keys() - old.keys()],
         "removed": [view(old[key]) for key in old.keys() - new.keys()],
         "changed": sorted(changed, key=lambda item: item["name"]),

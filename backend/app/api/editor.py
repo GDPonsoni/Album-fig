@@ -20,7 +20,7 @@ router = APIRouter(prefix="/editor", tags=["editor"])
 MAX_ASSETS = 100
 MAX_TOTAL_BYTES = 12 * 1024 * 1024  # por capítulo; cada imagem já sai do servidor com no máximo 150 KB
 MAX_UPLOAD = 8 * 1024 * 1024
-KINDS = {"sticker": 640, "background": 1200, "mosaic": 1200}  # lado maior, em pixels
+KINDS = {"sticker": 640, "background": 1200, "mosaic": 1200, "logo": 240}  # lado maior, em pixels
 
 
 class DraftIn(BaseModel):
@@ -195,4 +195,5 @@ def delete_asset(
 def _uses(content: dict, asset_id: int) -> bool:
     ids = {s.get("asset_id") for s in content.get("stickers", [])} | {p.get("background_asset_id") for p in content.get("pages", [])}
     ids.add((content.get("mosaic") or {}).get("asset_id"))
+    ids.add((content.get("org") or {}).get("logo_asset_id"))
     return asset_id in ids

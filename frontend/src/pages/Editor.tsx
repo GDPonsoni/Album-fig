@@ -28,7 +28,8 @@ const LAYOUTS: [string, string][] = [
 const SIZE_W = { P: 21, M: 28, G: 42 };
 const MAX_LINKS = 5;
 
-function crop(kind: 'sticker' | 'background' | 'mosaic', landscape: boolean): CropSpec {
+function crop(kind: 'sticker' | 'background' | 'mosaic' | 'logo', landscape: boolean): CropSpec {
+  if (kind === 'logo') return { width: 480, height: 480, type: 'image/png', label: 'o logo' };
   if (kind === 'sticker') return { width: 480, height: 640, type: 'image/png', label: 'a figurinha' };
   if (kind === 'mosaic') return { width: 800, height: 1200, type: 'image/jpeg', label: 'o mosaico' };
   return landscape
@@ -208,13 +209,13 @@ export function EditorChapter() {
   const [assets, setAssets] = useState<AssetView[]>([]);
   const [revision, setRevision] = useState<Row | null>(null);
   const [editable, setEditable] = useState(true);
-  const [tab, setTab] = useState<'pages' | 'mosaic' | 'format'>('pages');
+  const [tab, setTab] = useState<'pages' | 'mosaic' | 'general'>('pages');
   const [pageIndex, setPageIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [save, setSave] = useState<{ state: 'idle' | 'dirty' | 'saving' | 'saved' | 'error'; message?: string }>({ state: 'idle' });
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
-  const [cropping, setCropping] = useState<{ file: File; kind: 'sticker' | 'background' | 'mosaic'; apply: (asset: AssetView) => void } | null>(null);
+  const [cropping, setCropping] = useState<{ file: File; kind: 'sticker' | 'background' | 'mosaic' | 'logo'; apply: (asset: AssetView) => void } | null>(null);
   const mosaicFile = useRef<File | null>(null);
   const base = `/editor/chapters/${chapterId}`;
 
@@ -411,6 +412,8 @@ export function EditorChapter() {
   }[save.state];
 
   const mosaic = content.mosaic;
+  const org = content.org ?? draft.published.org ?? { name: chapter.org.name, description: chapter.org.description, color: chapter.org.color, logo_asset_id: null };
+  const setOrg = (patch: Partial<NonNullable<ChapterContent['org']>>) => change((c) => ({ ...c, org: { ...org, ...patch } }));
   const pickMosaic = (file: File) => {
     mosaicFile.current = file;
     setCropping({ file, kind: 'mosaic', apply: (asset) => change((c) => ({ ...c, mosaic: { cols: c.mosaic?.cols ?? 2, rows: c.mosaic?.rows ?? 3, asset_id: asset.id } })) });
@@ -439,7 +442,7 @@ export function EditorChapter() {
         <Link to="/conta" className="editor-back">← Sair do editor</Link>
         <div>
           <p className="album-kicker">{chapter.album.title}</p>
-          <h1>{chapter.org.name}</h1>
+          <h1>{content.org?.name || chapter.org.name}</h1>
         </div>
       </header>
 
@@ -451,7 +454,7 @@ export function EditorChapter() {
       {note ? <Message kind="ok">{note}</Message> : null}
 
       <div className="segmented editor-tabs" role="tablist" aria-label="Seções do editor">
-        {([['pages', 'Páginas'], ['mosaic', 'Mosaico'], ['format', 'Formato']] as const).map(([value, label]) => (
+        {([['pages', 'Páginas'], ['mosaic', 'Mosaico'], ['general', 'Geral']] as const).map(([value, label]) => (
           <button key={value} type="button" role="tab" aria-selected={tab === value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{label}</button>
         ))}
       </div>
@@ -618,18 +621,43 @@ export function EditorChapter() {
         </div>
       ) : null}
 
-      {tab === 'format' ? (
-        <section className="panel paper inspector">
-          <h2>Formato das páginas</h2>
-          <div className="segmented" role="group" aria-label="Orientação das páginas">
-            {(['portrait', 'landscape'] as const).map((value) => (
-              <button key={value} type="button" disabled={locked} className={content.layout.orientation === value ? 'active' : ''} onClick={() => change((c) => ({ ...c, layout: { orientation: value } }))}>
-                {value === 'portrait' ? 'Em pé' : 'Deitado'}
-              </button>
-            ))}
-          </div>
-          <p className="muted">Vale para todas as páginas do capítulo. Ao mudar, confira a posição das figurinhas.</p>
-        </section>
+      {tab === 'general' ? (
+        <>
+          <section className="panel paper inspector">
+            <h2>Sobre a organização</h2>
+            <p className="muted">Aparece na capa do álbum e no início do capítulo. Vale para todos os álbuns desta organização.</p>
+            <div className="org-logo-row">
+              {assetUrl(org.logo_asset_id) ? <img className="org-logo-preview" src={assetUrl(org.logo_asset_id)!} alt="Logo atual" style={{ borderColor: org.color }} /> : <i className="org-logo-preview" style={{ borderColor: org.color }} />}
+              <div className="photo-actions">
+                <PickButton label={org.logo_asset_id ? 'Trocar logo' : 'Escolher logo'} disabled={locked} onPick={(file) => setCropping({ file, kind: 'logo', apply: (asset) => setOrg({ logo_asset_id: asset.id }) })} />
+                {org.logo_asset_id ? <button type="button" className="link danger" disabled={locked} onClick={() => setOrg({ logo_asset_id: null })}>Tirar logo</button> : null}
+              </div>
+            </div>
+            <label className="field">Nome
+              <input value={org.name} maxLength={120} disabled={locked} onChange={(e) => setOrg({ name: e.target.value })} />
+            </label>
+            <label className="field"><span>Descrição <Counter value={org.description} max={600} /></span>
+              <textarea rows={3} value={org.description} maxLength={600} disabled={locked} onChange={(e) => setOrg({ description: e.target.value })} />
+            </label>
+            <label className="field">Cor da organização
+              <span className="color-row">
+                <input type="color" value={org.color} disabled={locked} onChange={(e) => setOrg({ color: e.target.value })} aria-label="Escolher cor" />
+                <code>{org.color}</code>
+              </span>
+            </label>
+          </section>
+          <section className="panel paper inspector">
+            <h2>Formato das páginas</h2>
+            <div className="segmented" role="group" aria-label="Orientação das páginas">
+              {(['portrait', 'landscape'] as const).map((value) => (
+                <button key={value} type="button" disabled={locked} className={content.layout.orientation === value ? 'active' : ''} onClick={() => change((c) => ({ ...c, layout: { orientation: value } }))}>
+                  {value === 'portrait' ? 'Em pé' : 'Deitado'}
+                </button>
+              ))}
+            </div>
+            <p className="muted">Vale para todas as páginas do capítulo. Ao mudar, confira a posição das figurinhas.</p>
+          </section>
+        </>
       ) : null}
 
       <footer className="editor-bar">

@@ -943,3 +943,42 @@ def test_conteudo_de_producao_ida_e_volta(db, chapter):
     content = revisions.parse_content(current["content"])
     assert len(content.stickers) == 17 and revisions.structural_problems(db, chapter, content) == []
     assert snapshot(db) == snapshot_before
+
+
+def test_identidade_da_org_publica_em_andamento_e_volta_no_rollback(db, album, chapter, content, editor, admin):
+    _, client = editor
+    _, admin_client = admin
+    org = chapter.org
+    before = (org.name, org.description, org.theme_color, org.logo_url)
+    draft = draft_of(client, chapter)["content"]
+    assert draft["org"]["name"] == org.name  # ponto de partida: o que está publicado
+
+    logo = upload(client, chapter, kind="logo").json()
+    draft["org"] = {"name": "  Nome  novo ", "description": "Quem somos", "color": "#aa3300", "logo_asset_id": logo["id"]}
+    # Álbum em andamento: identidade é cosmética e passa.
+    first = submit_and_approve(client, admin_client, chapter, draft)
+    detail = admin_client.get(f"/api/admin/revisions/{first}").json()
+    assert set(detail["diff"]["org"]) == {"name", "description", "color", "logo"}
+    assert admin_client.post(f"/api/admin/revisions/{first}/publish", json={}).status_code == 200
+    db.expire_all()
+    org = db.get(AlbumChapter, chapter.id).org
+    assert (org.name, org.description, org.theme_color, org.logo_url) == ("Nome novo", "Quem somos", "#aa3300", logo["url"])
+
+    assert admin_client.post(f"/api/admin/revisions/{first}/rollback").status_code == 200
+    db.expire_all()
+    org = db.get(AlbumChapter, chapter.id).org
+    assert (org.name, org.description, org.theme_color, org.logo_url) == before
+
+
+def test_identidade_da_org_valida_cor_logo_e_conteudo_antigo(db, chapter, editor, admin):
+    _, client = editor
+    draft = draft_of(client, chapter)["content"]
+    for bad in (
+        {"name": "", "description": "", "color": "#112233", "logo_asset_id": None},
+        {"name": "X", "description": "", "color": "vermelho", "logo_asset_id": None},
+        {"name": "X", "description": "", "color": "#112233", "logo_asset_id": 999999},
+    ):
+        assert save(client, chapter, {**draft, "org": bad}).status_code == 422
+    # Rascunho sem `org` (formato antigo) continua válido e não mexe na org.
+    old = {k: v for k, v in draft.items() if k != "org"}
+    assert save(client, chapter, old).status_code == 200

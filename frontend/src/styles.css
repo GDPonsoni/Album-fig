@@ -829,3 +829,8 @@ button:disabled { cursor: default; }
 .slot-row .inline-field { flex-direction: column; align-items: flex-start; }
 .field.check { flex-direction: row; align-items: center; gap: 8px; }
 .cropper-canvas { align-self: center; max-width: 100%; border-radius: 8px; background: #111; touch-action: none; cursor: grab; }
+
+.org-logo-row { display: flex; align-items: center; gap: 14px; }
+.org-logo-preview { width: 72px; height: 72px; flex: none; border-radius: 50%; object-fit: cover; border: 3px solid var(--line, #ccc); background: rgba(0, 0, 0, 0.05); display: block; }
+.color-row { display: flex; align-items: center; gap: 10px; }
+.color-row input[type='color'] { width: 56px; height: 44px; padding: 2px; border-radius: 10px; }
