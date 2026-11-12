@@ -17,6 +17,8 @@ export function contentToPages(
     mosaic_image_url: url(content.mosaic?.asset_id),
     mosaic_cols: content.mosaic?.cols ?? 2,
     mosaic_rows: content.mosaic?.rows ?? 3,
+    mosaic_scale: content.mosaic?.scale ?? 1,
+    mosaic_rot: content.mosaic?.rot ?? 0,
   };
   const active = content.stickers.filter((sticker) => sticker.active);
   const pages: PageDetail[] = [...content.pages]

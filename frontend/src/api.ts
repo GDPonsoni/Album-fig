@@ -129,6 +129,8 @@ export interface PageDetail {
     mosaic_image_url: string | null;
     mosaic_cols: number;
     mosaic_rows: number;
+    mosaic_scale?: number;
+    mosaic_rot?: number;
   };
   slots: Slot[];
 }
@@ -192,7 +194,7 @@ export interface ChapterContent {
   layout: { orientation: 'portrait' | 'landscape' };
   org?: { name: string; description: string; color: string; logo_asset_id: number | null } | null;
   pages: ContentPage[];
-  mosaic: { asset_id: number | null; cols: number; rows: number; source_asset_id?: number | null; crop?: CropState | null; pieces?: MosaicPiece[] } | null;
+  mosaic: { asset_id: number | null; cols: number; rows: number; source_asset_id?: number | null; crop?: CropState | null; pieces?: MosaicPiece[]; scale?: number; rot?: number } | null;
   stickers: ContentSticker[];
 }
 

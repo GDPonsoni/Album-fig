@@ -921,3 +921,5 @@ details.history > summary::after { content: ' ▾'; }
 details.history[open] > summary::after { content: ' ▴'; }
 .history-pack > details > summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; cursor: pointer; padding: 8px 0; list-style: none; }
 .history-pack > details > summary::-webkit-details-marker { display: none; }
+
+.mosaic { transform-origin: center center; }

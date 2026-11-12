@@ -86,7 +86,8 @@ export function MosaicPage({ detail, onOpen, lastPasted, lines, selected }: { de
         className={`mosaic${lines ? ' lines' : ''}`}
         style={{
           gridTemplateColumns: `repeat(${org.mosaic_cols}, 1fr)`, gridTemplateRows: `repeat(${org.mosaic_rows}, 1fr)`,
-          aspectRatio: `${3 * org.mosaic_cols} / ${4 * org.mosaic_rows}`, width: `${mosaicWidth(org.mosaic_cols, org.mosaic_rows, detail.orientation === 'landscape')}%`,
+          aspectRatio: `${3 * org.mosaic_cols} / ${4 * org.mosaic_rows}`, width: `${Math.min(100, mosaicWidth(org.mosaic_cols, org.mosaic_rows, detail.orientation === 'landscape') * (org.mosaic_scale ?? 1))}%`,
+          transform: `translateX(-50%) rotate(${org.mosaic_rot ?? 0}deg)`,
         }}
       >
         {org.mosaic_image_url ? <img className="mosaic-faded" src={org.mosaic_image_url} alt="" loading="lazy" /> : null}

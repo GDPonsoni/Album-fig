@@ -175,6 +175,8 @@ def page_detail(db: Session, user: User, album: Album | None, org_id: int, page_
             "mosaic_image_url": chapter.mosaic_image_url if is_mosaic else None,
             "mosaic_cols": chapter.mosaic_cols,
             "mosaic_rows": chapter.mosaic_rows,
+            "mosaic_scale": ((chapter.layout or {}).get("mosaic") or {}).get("scale", 1),
+            "mosaic_rot": ((chapter.layout or {}).get("mosaic") or {}).get("rot", 0),
         },
         "page_no": page_no,
         "slots": [_slot(s, inventory.get(s.id)) for s in stickers],

@@ -535,6 +535,14 @@ export function EditorChapter() {
   const mosaic = content.mosaic;
   const org = content.org ?? draft.published.org ?? { name: chapter.org.name, description: chapter.org.description, color: chapter.org.color, logo_asset_id: null };
   const setOrg = (patch: Partial<NonNullable<ChapterContent['org']>>) => change((c) => ({ ...c, org: { ...org, ...patch } }));
+  // Tamanho e giro do mosaico inteiro na página (a imagem em si se ajusta em "Ajustar imagem").
+  const setMosaicView = (patch: { scale?: number; rot?: number }) =>
+    change((c) => {
+      if (!c.mosaic) return c;
+      const scale = Math.round(Math.min(1.6, Math.max(0.4, patch.scale ?? c.mosaic.scale ?? 1)) * 100) / 100;
+      const rot = Math.round(Math.min(180, Math.max(-180, patch.rot ?? c.mosaic.rot ?? 0)));
+      return { ...c, mosaic: { ...c.mosaic, scale, rot } };
+    });
   const pickMosaic = (file: File) =>
     setCropping({
       file, kind: 'mosaic', newSource: true,
@@ -797,6 +805,25 @@ export function EditorChapter() {
                   ))}
                   <p className="muted">{mosaic.cols * mosaic.rows} peças no total.{frozen ? ' O álbum já começou: a grade não pode mudar.' : ''}</p>
                 </div>
+              ) : null}
+              {mosaic ? (
+                <>
+                  <div className="field"><span>Tamanho na página ({Math.round((mosaic.scale ?? 1) * 100)}%)</span>
+                    <span className="zoom-row">
+                      <button type="button" className="btn" disabled={locked} aria-label="Diminuir o mosaico" onClick={() => setMosaicView({ scale: (mosaic.scale ?? 1) - 0.1 })}>−</button>
+                      <input type="range" min={40} max={160} step={5} disabled={locked} value={Math.round((mosaic.scale ?? 1) * 100)} onChange={(e) => setMosaicView({ scale: Number(e.target.value) / 100 })} aria-label="Tamanho do mosaico" />
+                      <button type="button" className="btn" disabled={locked} aria-label="Aumentar o mosaico" onClick={() => setMosaicView({ scale: (mosaic.scale ?? 1) + 0.1 })}>+</button>
+                    </span>
+                  </div>
+                  <div className="field"><span>Girar na página ({mosaic.rot ?? 0}°)</span>
+                    <span className="zoom-row">
+                      <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a esquerda" onClick={() => setMosaicView({ rot: (mosaic.rot ?? 0) - 5 })}>⟲</button>
+                      <input type="range" min={-45} max={45} step={1} disabled={locked} value={clamp(mosaic.rot ?? 0, -45, 45)} onChange={(e) => setMosaicView({ rot: Number(e.target.value) })} aria-label="Ângulo do mosaico" />
+                      <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a direita" onClick={() => setMosaicView({ rot: (mosaic.rot ?? 0) + 5 })}>⟳</button>
+                    </span>
+                  </div>
+                  <button type="button" className="link" disabled={locked || ((mosaic.scale ?? 1) === 1 && !mosaic.rot)} onClick={() => setMosaicView({ scale: 1, rot: 0 })}>Voltar ao tamanho e ângulo padrão</button>
+                </>
               ) : null}
             </section>
             {mosaic?.asset_id ? (

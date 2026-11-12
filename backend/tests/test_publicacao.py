@@ -735,7 +735,7 @@ def test_mosaico_guarda_origem_e_enquadramento_sem_levar_para_producao(db, album
     assert save(client, chapter, bad).status_code == 422
     revision_id = submit_and_approve(client, admin_client, chapter, draft)
     detail = admin_client.get(f"/api/admin/revisions/{revision_id}").json()
-    assert detail["diff"]["mosaic"]["new"] == {"asset_id": poster["id"], "cols": 1, "rows": 1, "image_url": poster["url"]}
+    assert detail["diff"]["mosaic"]["new"] == {"asset_id": poster["id"], "cols": 1, "rows": 1, "scale": 1.0, "rot": 0.0, "image_url": poster["url"]}
     assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
     # A origem continua privada; só a imagem do mosaico foi publicada.
     db.expire_all()
@@ -781,6 +781,37 @@ def test_pecas_do_mosaico_tem_texto_proprio_mesmo_com_album_em_andamento(db, alb
     assert admin_client.post(f"/api/admin/revisions/{revision_id}/rollback").status_code == 200
     db.expire_all()
     assert db.get(Sticker, piece.id).name.endswith("peça 2 de 4")
+
+
+def test_mosaico_muda_de_tamanho_e_gira_na_pagina_com_album_em_andamento(db, album, chapter, editor, admin, make_user, login):
+    _, client = editor
+    _, admin_client = admin
+    set_period(db, album, 10, 100)
+    draft = draft_of(client, chapter)["content"]
+    poster = upload(client, chapter, kind="mosaic", data=png((10, 90, 160), (600, 800))).json()
+    draft["mosaic"] = {"asset_id": poster["id"], "cols": 2, "rows": 2}
+    first = submit_and_approve(client, admin_client, chapter, draft)
+    assert admin_client.post(f"/api/admin/revisions/{first}/publish", json={}).status_code == 200
+    set_period(db, album, -1, 100)
+    org_id = db.get(AlbumChapter, chapter.id).org_id
+    player = login(make_user("Veja"))
+    page = player.get(f"/api/album/orgs/{org_id}/pages/0").json()
+    assert page["org"]["mosaic_scale"] == 1 and page["org"]["mosaic_rot"] == 0
+
+    edited = copy.deepcopy(draft_of(client, chapter)["content"])
+    edited["mosaic"].update(scale=1.3, rot=-8)
+    for bad in ({"scale": 3}, {"scale": 0.1}, {"rot": 300}):
+        wrong = copy.deepcopy(edited)
+        wrong["mosaic"].update(bad)
+        assert save(client, chapter, wrong).status_code == 422
+    revision_id = submit_and_approve(client, admin_client, chapter, edited)
+    mosaic_diff = admin_client.get(f"/api/admin/revisions/{revision_id}").json()["diff"]["mosaic"]
+    assert mosaic_diff["old"]["scale"] == 1 and mosaic_diff["new"]["scale"] == 1.3 and mosaic_diff["new"]["rot"] == -8
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    page = player.get(f"/api/album/orgs/{org_id}/pages/0").json()
+    assert page["org"]["mosaic_scale"] == 1.3 and page["org"]["mosaic_rot"] == -8
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/rollback").status_code == 200
+    assert player.get(f"/api/album/orgs/{org_id}/pages/0").json()["org"]["mosaic_scale"] == 1
 
 
 def test_figurinha_gira_na_pagina_mesmo_com_album_em_andamento(db, album, chapter, content, editor, admin):
