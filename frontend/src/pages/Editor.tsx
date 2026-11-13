@@ -110,24 +110,26 @@ function PickButton({ label, disabled, onPick, primary }: { label: string; disab
 type Slot = { x: number; y: number; w: number; h: number; rot?: number };
 
 /** Camada por cima da página: arrastar move a figurinha, puxar o canto muda o tamanho, tocar no cabeçalho edita o texto. */
-function EditLayer({ stickers, selected, head, landscape, locked, arrange, onSelect, onSlot }: {
+function EditLayer({ stickers, selected, head, landscape, locked, arrange, studio, onSelect, onSlot, onRot }: {
   stickers: ContentSticker[];
   selected: string | null;
   head: boolean;
   landscape: boolean;
   locked: boolean;
   arrange: boolean; // só com o modo "mover" ligado as figurinhas arrastam; fora dele o toque só seleciona
+  studio: boolean; // tela cheia: alças de tamanho e giro sempre à mão
   onSelect: (key: string | null) => void;
   onSlot: (key: string, slot: Slot, final: boolean) => void;
+  onRot: (key: string, rot: number) => void;
 }) {
   const layer = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ key: string; mode: 'move' | 'resize'; x: number; y: number; slot: Slot } | null>(null);
+  const drag = useRef<{ key: string; mode: 'move' | 'resize' | 'rotate'; x: number; y: number; slot: Slot } | null>(null);
   const top = landscape ? HEAD_H.landscape : HEAD_H.portrait;
 
-  const down = (event: ReactPointerEvent, sticker: ContentSticker, mode: 'move' | 'resize') => {
+  const down = (event: ReactPointerEvent, sticker: ContentSticker, mode: 'move' | 'resize' | 'rotate') => {
     event.stopPropagation();
     onSelect(sticker.key);
-    if (locked || !arrange) return;
+    if (locked || (!arrange && mode === 'move')) return;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     drag.current = { key: sticker.key, mode, x: event.clientX, y: event.clientY, slot: sticker.slot };
   };
@@ -138,6 +140,17 @@ function EditLayer({ stickers, selected, head, landscape, locked, arrange, onSel
     const dx = ((event.clientX - state.x) / box.width) * 100;
     const dy = ((event.clientY - state.y) / box.height) * 100;
     const { slot } = state;
+    if (state.mode === 'rotate') {
+      // Ângulo do centro da figurinha até o dedo; 0° é a alça apontando para cima. Perto de múltiplos de 15° gruda.
+      const cx = box.left + ((slot.x + slot.w / 2) / 100) * box.width;
+      const cy = box.top + ((slot.y + slot.h / 2) / 100) * box.height;
+      let deg = (Math.atan2(event.clientY - cy, event.clientX - cx) * 180) / Math.PI + 90;
+      if (deg > 180) deg -= 360;
+      const snapped = Math.round(deg / 15) * 15;
+      if (event.shiftKey || Math.abs(deg - snapped) < 3) deg = snapped;
+      onRot(state.key, clamp(Math.round(deg), -180, 180));
+      return;
+    }
     if (state.mode === 'move') {
       let x = clamp(slot.x + dx, 0, 100 - slot.w);
       const y = clamp(slot.y + dy, Math.min(top, 100 - slot.h), 100 - slot.h);
@@ -174,7 +187,7 @@ function EditLayer({ stickers, selected, head, landscape, locked, arrange, onSel
         <div
           key={sticker.key}
           className={`edit-box${sticker.key === selected ? ' on' : ''}`}
-          style={{ left: `${sticker.slot.x}%`, top: `${sticker.slot.y}%`, width: `${sticker.slot.w}%`, height: `${sticker.slot.h}%`, ...(sticker.slot.rot ? { transform: `rotate(${sticker.slot.rot}deg)` } : null) }}
+          style={{ left: `${sticker.slot.x}%`, top: `${sticker.slot.y}%`, width: `${sticker.slot.w}%`, height: `${sticker.slot.h}%`, ...(sticker.slot.rot ? { transform: `rotate(${sticker.slot.rot}deg)` } : null), ['--rot' as string]: `${sticker.slot.rot ?? 0}deg` }}
           role="button"
           tabIndex={0}
           aria-label={`${arrange ? 'Mover' : 'Selecionar'} ${sticker.name}`}
@@ -185,7 +198,16 @@ function EditLayer({ stickers, selected, head, landscape, locked, arrange, onSel
           onKeyDown={(e) => key(e, sticker)}
           onFocus={() => onSelect(sticker.key)}
         >
-          {sticker.key === selected && !locked && arrange ? (
+          {sticker.key === selected && !locked && (arrange || studio) ? (
+            <>
+            <i
+              className="edit-rotate"
+              aria-label="Girar"
+              onPointerDown={(e) => down(e, sticker, 'rotate')}
+              onPointerMove={move}
+              onPointerUp={up}
+              onPointerCancel={up}
+            ><b>{sticker.slot.rot ?? 0}°</b></i>
             <i
               className="edit-handle"
               aria-label="Mudar o tamanho"
@@ -194,6 +216,7 @@ function EditLayer({ stickers, selected, head, landscape, locked, arrange, onSel
               onPointerUp={up}
               onPointerCancel={up}
             />
+            </>
           ) : null}
         </div>
       ))}
@@ -214,6 +237,8 @@ export function EditorChapter() {
   const [editable, setEditable] = useState(true);
   const [inspect, setInspect] = useState<string | null>(null);
   const [arrange, setArrange] = useState(false);
+  const [studio, setStudio] = useState(false);
+  const keyActions = useRef<(event: KeyboardEvent) => void>(undefined);
   const [mosaicLines, setMosaicLines] = useState(true);
   const [piece, setPieceIndex] = useState<number | null>(null);
   const [pieceSheet, setPieceSheet] = useState(false);
@@ -333,6 +358,7 @@ export function EditorChapter() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return; // os campos têm o desfazer deles
+      keyActions.current?.(event);
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'z') return;
       event.preventDefault();
       travel(event.shiftKey ? 'future' : 'past');
@@ -340,6 +366,13 @@ export function EditorChapter() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [travel]);
+
+  useEffect(() => {
+    if (!studio) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, [studio]);
 
   const pages = useMemo(() => (content ? [...content.pages].sort((a, b) => a.page_no - b.page_no) : []), [content]);
   const details = useMemo(
@@ -578,6 +611,58 @@ export function EditorChapter() {
       return { ...c, mosaic: { ...c.mosaic, pieces: [...others, { ...pieceOf(index), ...patch }].sort((a, b) => a.index - b.index) } };
     });
   const piecePreview = piece !== null && mosaic ? pieceOf(piece) : null;
+
+  // Posição, tamanho e giro por números ou botões: o que o arrastar não resolve com precisão.
+  const ratio = landscape ? 1.38 : 1 / 1.38;
+  const headTop = landscape ? HEAD_H.landscape : HEAD_H.portrait;
+  const setSlot = (sticker: ContentSticker, patch: Partial<Slot>) => {
+    const next = { ...sticker.slot, ...patch };
+    const w = clamp(next.w, 8, 100);
+    const h = round1((w * ratio * 4) / 3);
+    const x = round1(clamp(next.x, 0, 100 - w));
+    const y = round1(clamp(next.y, Math.min(headTop, 100 - h), 100 - h));
+    moveSticker(sticker.key, { ...next, x, y, w: round1(w), h });
+  };
+  const growBy = (sticker: ContentSticker, delta: number) => setSlot(sticker, { w: sticker.slot.w + delta });
+  const centerOf = (sticker: ContentSticker, axis: 'x' | 'y' | 'both') =>
+    setSlot(sticker, {
+      ...(axis !== 'y' ? { x: 50 - sticker.slot.w / 2 } : null),
+      ...(axis !== 'x' ? { y: 50 - sticker.slot.h / 2 } : null),
+    });
+  keyActions.current = (event) => {
+    if (event.key === 'Escape' && studio) { setStudio(false); return; }
+    if (locked || !current || tab !== 'pages' || mosaicPage || event.ctrlKey || event.metaKey) return;
+    const big = event.shiftKey;
+    if (event.key === '[' || event.key === '{') setRot(current, (current.slot.rot ?? 0) - (big ? 15 : 5));
+    else if (event.key === ']' || event.key === '}') setRot(current, (current.slot.rot ?? 0) + (big ? 15 : 5));
+    else if (event.key === '0') setRot(current, 0);
+    else if (event.key === '+' || event.key === '=') growBy(current, big ? 4 : 1);
+    else if (event.key === '-' || event.key === '_') growBy(current, big ? -4 : -1);
+    else return;
+    event.preventDefault();
+  };
+
+  const chips = (
+    <nav className="page-chips" aria-label="Páginas do capítulo">
+      {pages.map((p, index) => (
+        <button key={p.page_no} type="button" className={!mosaicPage && p.page_no === page.page_no ? 'active' : ''} onClick={() => { setMosaicPage(false); setPageIndex(index); setSelected(null); }}>{p.page_no}</button>
+      ))}
+      <button type="button" className="chip-add" disabled={locked || pages.length >= 30} onClick={() => { setMosaicPage(false); addPage(); }} aria-label="Nova página">+</button>
+      <button type="button" className={`chip-mosaic${mosaicPage ? ' active' : ''}`} onClick={() => { setMosaicPage(true); setSelected(null); }}>▦ Mosaico</button>
+    </nav>
+  );
+  const toolbar = (
+    <div className="editor-toolbar" role="toolbar" aria-label="Ferramentas da página">
+      <button type="button" className="btn" disabled={locked || !depth.past} onClick={() => travel('past')}>↶ Desfazer</button>
+      <button type="button" className="btn" disabled={locked || !depth.future} onClick={() => travel('future')}>↷ Refazer</button>
+      <span className="spacer" />
+      {!mosaicPage ? (
+        <button type="button" className={`btn${arrange ? ' on' : ''}`} disabled={locked} aria-pressed={arrange} onClick={() => setArrange((v) => !v)}>{arrange ? '✋ Mover: ligado' : '🔒 Mover: desligado'}</button>
+      ) : null}
+      <button type="button" className="btn" disabled={locked || !differs} onClick={restoreAll}>Voltar ao original</button>
+      <button type="button" className={`btn${studio ? ' on' : ''}`} aria-pressed={studio} onClick={() => { setStudio((v) => !v); if (!studio) setArrange(true); }}>{studio ? '✕ Sair da tela cheia' : '⛶ Tela cheia'}</button>
+    </div>
+  );
   return (
     <div className="editor">
       {cropping ? (
@@ -620,26 +705,13 @@ export function EditorChapter() {
         ))}
       </div>
 
-      {tab === 'pages' ? (
-        <nav className="page-chips" aria-label="Páginas do capítulo">
-          {pages.map((p, index) => (
-            <button key={p.page_no} type="button" className={!mosaicPage && p.page_no === page.page_no ? 'active' : ''} onClick={() => { setMosaicPage(false); setPageIndex(index); setSelected(null); }}>{p.page_no}</button>
-          ))}
-          <button type="button" className="chip-add" disabled={locked || pages.length >= 30} onClick={() => { setMosaicPage(false); addPage(); }} aria-label="Nova página">+</button>
-          <button type="button" className={`chip-mosaic${mosaicPage ? ' active' : ''}`} onClick={() => { setMosaicPage(true); setSelected(null); }}>▦ Mosaico</button>
-        </nav>
-      ) : null}
+      {tab === 'pages' && !studio ? chips : null}
 
       {tab === 'pages' && !mosaicPage ? (
-        <div className="editor-body">
+        <div className={`editor-body${studio ? ' studio' : ''}`}>
+          {studio ? <div className="studio-bar">{chips}<span className={`save-state save-${save.state}`} role="status">{saveLabel}</span></div> : null}
           <div className="editor-canvas">
-            <div className="editor-toolbar" role="toolbar" aria-label="Ferramentas da página">
-              <button type="button" className="btn" disabled={locked || !depth.past} onClick={() => travel('past')}>↶ Desfazer</button>
-              <button type="button" className="btn" disabled={locked || !depth.future} onClick={() => travel('future')}>↷ Refazer</button>
-              <span className="spacer" />
-              <button type="button" className={`btn${arrange ? ' on' : ''}`} disabled={locked} aria-pressed={arrange} onClick={() => setArrange((v) => !v)}>{arrange ? '✋ Mover: ligado' : '🔒 Mover: desligado'}</button>
-              <button type="button" className="btn" disabled={locked || !differs} onClick={restoreAll}>Voltar ao original</button>
-            </div>
+            {toolbar}
             {arrange && !locked ? <p className="mode-banner">Modo mover ligado: arraste as figurinhas e puxe o canto para o tamanho. Desligue para só selecionar.</p> : null}
             <div className={`preview-stage edit-stage${landscape ? ' landscape' : ''}`}>
               {detail ? (
@@ -647,11 +719,11 @@ export function EditorChapter() {
                   detail={detail}
                   onOpen={() => {}}
                   lastPasted={null}
-                  overlay={<EditLayer stickers={onPage} selected={selected} head={selected === 'head'} landscape={landscape} locked={locked} arrange={arrange} onSelect={setSelected} onSlot={(key, slot) => moveSticker(key, slot)} />}
+                  overlay={<EditLayer stickers={onPage} selected={selected} head={selected === 'head'} landscape={landscape} locked={locked} arrange={arrange} studio={studio} onSelect={setSelected} onSlot={(key, slot) => moveSticker(key, slot)} onRot={(key, rot) => { const st = content.stickers.find((x) => x.key === key); if (st) setRot(st, rot); }} />}
                 />
               ) : null}
             </div>
-            <p className="muted edit-tip">Toque numa figurinha para editar. Para mudar de lugar ou de tamanho, ligue o modo mover. Toque no topo para editar o texto da página.</p>
+            <p className="muted edit-tip">{studio ? 'Arraste a figurinha; a bolinha vermelha muda o tamanho e a de cima gira (segure Shift para travar de 15° em 15°). Teclas: [ e ] giram, + e − mudam o tamanho, 0 zera o giro, Esc sai.' : 'Toque numa figurinha para editar. Para mudar de lugar ou de tamanho, ligue o modo mover ou use a tela cheia. Toque no topo para editar o texto da página.'}</p>
           </div>
 
           <div className="editor-inspector">
@@ -682,14 +754,33 @@ export function EditorChapter() {
                     <small className="muted">Mostra a figurinha como o jogador vê, frente e verso.</small>
                   </div>
                 </div>
-                <div className="field"><span>Girar na página ({current.slot.rot ?? 0}°)</span>
+                <fieldset className="field transform-box" disabled={locked}>
+                  <legend>Posição, tamanho e giro</legend>
+                  <div className="num-grid">
+                    {([['x', 'Esquerda %'], ['y', 'Topo %'], ['w', 'Largura %']] as const).map(([axis, label]) => (
+                      <label key={axis}><span>{label}</span>
+                        <input type="number" step={0.5} value={round1(current.slot[axis])} onChange={(e) => e.target.value !== '' && setSlot(current, { [axis]: Number(e.target.value) })} />
+                      </label>
+                    ))}
+                    <label><span>Giro °</span>
+                      <input type="number" min={-180} max={180} step={1} value={current.slot.rot ?? 0} onChange={(e) => e.target.value !== '' && setRot(current, Number(e.target.value))} />
+                    </label>
+                  </div>
                   <span className="zoom-row">
-                    <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a esquerda" onClick={() => setRot(current, (current.slot.rot ?? 0) - 5)}>⟲</button>
-                    <input type="range" min={-45} max={45} step={1} disabled={locked} value={clamp(current.slot.rot ?? 0, -45, 45)} onChange={(e) => setRot(current, Number(e.target.value))} aria-label="Ângulo da figurinha" />
-                    <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a direita" onClick={() => setRot(current, (current.slot.rot ?? 0) + 5)}>⟳</button>
-                    <button type="button" className="btn" disabled={locked || !current.slot.rot} onClick={() => setRot(current, 0)}>Zerar</button>
+                    <button type="button" className="btn" aria-label="Girar 90° para a esquerda" onClick={() => setRot(current, (current.slot.rot ?? 0) - 90)}>⟲ 90°</button>
+                    <button type="button" className="btn" aria-label="Girar 5° para a esquerda" onClick={() => setRot(current, (current.slot.rot ?? 0) - 5)}>⟲ 5°</button>
+                    <button type="button" className="btn" disabled={!current.slot.rot} onClick={() => setRot(current, 0)}>Zerar</button>
+                    <button type="button" className="btn" aria-label="Girar 5° para a direita" onClick={() => setRot(current, (current.slot.rot ?? 0) + 5)}>5° ⟳</button>
+                    <button type="button" className="btn" aria-label="Girar 90° para a direita" onClick={() => setRot(current, (current.slot.rot ?? 0) + 90)}>90° ⟳</button>
                   </span>
-                </div>
+                  <input type="range" min={-180} max={180} step={1} value={current.slot.rot ?? 0} onChange={(e) => setRot(current, Number(e.target.value))} aria-label="Ângulo da figurinha" />
+                  <span className="zoom-row">
+                    <button type="button" className="btn" aria-label="Diminuir" onClick={() => growBy(current, -2)}>− Menor</button>
+                    <button type="button" className="btn" aria-label="Aumentar" onClick={() => growBy(current, 2)}>Maior +</button>
+                    <button type="button" className="btn" onClick={() => centerOf(current, 'x')}>Centralizar ↔</button>
+                    <button type="button" className="btn" onClick={() => centerOf(current, 'y')}>Centralizar ↕</button>
+                  </span>
+                </fieldset>
                 <div className="inspector-photo">
                   <div className="photo-frame">{assetUrl(current.asset_id) ? <img src={assetUrl(current.asset_id)!} alt="" /> : <span>Sem imagem</span>}</div>
                   <div className="photo-actions">
@@ -777,8 +868,10 @@ export function EditorChapter() {
       ) : null}
 
       {tab === 'pages' && mosaicPage ? (
-        <div className="editor-body">
+        <div className={`editor-body${studio ? ' studio' : ''}`}>
+          {studio ? <div className="studio-bar">{chips}<span className={`save-state save-${save.state}`} role="status">{saveLabel}</span></div> : null}
           <div className="editor-canvas">
+            {toolbar}
             <label className="field check"><input type="checkbox" checked={mosaicLines} onChange={(e) => setMosaicLines(e.target.checked)} /> <span>Mostrar as linhas que dividem as figurinhas</span></label>
             <div className={`preview-stage edit-stage`}>
               {mosaicDetail ? <MosaicPage detail={mosaicDetail} onOpen={(slot) => setPieceIndex(slot.mosaic_index ?? null)} lastPasted={null} lines={mosaicLines} selected={piece} /> : <p className="empty-mosaic">Nenhuma imagem de mosaico ainda.</p>}
@@ -818,8 +911,13 @@ export function EditorChapter() {
                   <div className="field"><span>Girar na página ({mosaic.rot ?? 0}°)</span>
                     <span className="zoom-row">
                       <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a esquerda" onClick={() => setMosaicView({ rot: (mosaic.rot ?? 0) - 5 })}>⟲</button>
-                      <input type="range" min={-45} max={45} step={1} disabled={locked} value={clamp(mosaic.rot ?? 0, -45, 45)} onChange={(e) => setMosaicView({ rot: Number(e.target.value) })} aria-label="Ângulo do mosaico" />
+                      <input type="range" min={-180} max={180} step={1} disabled={locked} value={mosaic.rot ?? 0} onChange={(e) => setMosaicView({ rot: Number(e.target.value) })} aria-label="Ângulo do mosaico" />
                       <button type="button" className="btn" disabled={locked} aria-label="Girar 5° para a direita" onClick={() => setMosaicView({ rot: (mosaic.rot ?? 0) + 5 })}>⟳</button>
+                    </span>
+                    <span className="zoom-row">
+                      <button type="button" className="btn" disabled={locked} onClick={() => setMosaicView({ rot: (mosaic.rot ?? 0) - 90 })}>⟲ 90°</button>
+                      <input type="number" min={-180} max={180} disabled={locked} value={mosaic.rot ?? 0} onChange={(e) => e.target.value !== '' && setMosaicView({ rot: Number(e.target.value) })} aria-label="Ângulo do mosaico em graus" />
+                      <button type="button" className="btn" disabled={locked} onClick={() => setMosaicView({ rot: (mosaic.rot ?? 0) + 90 })}>90° ⟳</button>
                     </span>
                   </div>
                   <button type="button" className="link" disabled={locked || ((mosaic.scale ?? 1) === 1 && !mosaic.rot)} onClick={() => setMosaicView({ scale: 1, rot: 0 })}>Voltar ao tamanho e ângulo padrão</button>
