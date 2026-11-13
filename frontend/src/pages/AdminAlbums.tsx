@@ -5,7 +5,7 @@ import { Message } from '../components/ui';
 
 type Row = Record<string, any>;
 
-const STATUS: Record<string, string> = { draft: 'Rascunho', scheduled: 'Agendado', active: 'Em andamento', ended: 'Encerrado' };
+const STATUS: Record<string, string> = { draft: 'Rascunho', scheduled: 'Agendado', paused: 'Pausado', active: 'Em andamento', ended: 'Encerrado' };
 const PARAM_LABEL: Record<string, string> = {
   'daily.refill_minutes': 'Minutos entre pacotes da gaveta',
   'daily.stock_cap': 'Limite da gaveta (pacotes)',
@@ -71,7 +71,7 @@ function AlbumForm({ initial, onSaved, onCancel }: { initial: Row | null; onSave
     ready: initial?.state === 'ready',
   });
   const [error, setError] = useState('');
-  const active = initial?.status === 'active';
+  const active = initial?.status === 'active' || initial?.status === 'paused';
   const save = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
@@ -100,7 +100,7 @@ function AlbumForm({ initial, onSaved, onCancel }: { initial: Row | null; onSave
       <label className="field">
         <span>Pronto para ir ao ar</span>
         <input type="checkbox" disabled={active} checked={form.ready} onChange={(e) => setForm({ ...form, ready: e.target.checked })} />
-        <small>Pronto, o álbum entra no ar sozinho na data de início. Só um álbum pronto por período.</small>
+        <small>Pronto, o álbum entra no ar sozinho na data de início (programar postagem). A data de fim também encerra sozinha. Só um álbum pronto por período.</small>
       </label>
       <Message>{error}</Message>
       <div className="admin-actions">
@@ -120,7 +120,7 @@ function Chapters({ album }: { album: Row }) {
   const [pick, setPick] = useState('');
   const [fresh, setFresh] = useState({ name: '', theme_color: '#1d4ed8' });
   const base = `/admin/albums/${album.id}/chapters`;
-  const frozen = album.status === 'active' || album.status === 'ended';
+  const frozen = ['active', 'paused', 'ended'].includes(album.status);
   const load = useCallback(() => api<Row[]>(base).then(setRows).catch((e) => setError(e.message)), [base]);
   useEffect(() => {
     load();
@@ -139,6 +139,18 @@ function Chapters({ album }: { album: Row }) {
     }
   };
   const used = new Set(rows.map((row) => row.org_id));
+  const [orgEdit, setOrgEdit] = useState<Row | null>(null);
+  const editOrg = (row: Row) => api<Row[]>('/admin/orgs').then((all) => setOrgEdit(all.find((org) => org.id === row.org_id) ?? null));
+  const saveOrg = (event: FormEvent) => {
+    event.preventDefault();
+    if (!orgEdit) return;
+    const { name, description, logo_url, theme_color } = orgEdit;
+    run(async () => {
+      await api(`/admin/orgs/${orgEdit.id}`, { method: 'PUT', body: { name, description, logo_url, theme_color } });
+      setOrgEdit(null);
+      return 'Org atualizada.';
+    });
+  };
   const add = (event: FormEvent) => {
     event.preventDefault();
     run(async () => {
@@ -177,11 +189,26 @@ function Chapters({ album }: { album: Row }) {
                 <ImageInput value={row.mosaic_image_url} name={`orgs/${row.org_name}/mosaico`} onChange={(url) => update(row, { mosaic_image_url: url })} />
               ) : null}
               {!frozen ? <button className="link" onClick={() => mosaic(row)}>Gerar mosaico</button> : null}
-              {!frozen ? <button className="link danger" onClick={() => window.confirm(`Tirar ${row.org_name} deste álbum?`) && run(() => api(`${base}/${row.id}`, { method: 'DELETE' }))}>Remover</button> : null}
+              {album.status !== 'ended' ? <button className="link" onClick={() => editOrg(row)}>Editar org</button> : null}
+              {!frozen ? <button className="link danger" onClick={() => window.confirm(`Tirar ${row.org_name} deste álbum? A org continua cadastrada.`) && run(() => api(`${base}/${row.id}`, { method: 'DELETE' }))}>Remover</button> : null}
+              {!frozen ? <button className="link danger" onClick={() => window.confirm(`Apagar a org ${row.org_name} de vez, com o capítulo? Isso não pode ser desfeito.`) && run(() => api(`${base}/${row.id}?delete_org=true`, { method: 'DELETE' }))}>Apagar org</button> : null}
             </span>
           </li>
         ))}
       </ul>
+      {orgEdit ? (
+        <form className="admin-form" onSubmit={saveOrg}>
+          <h4>Editar org</h4>
+          <label className="field"><span>Nome</span><input required maxLength={120} value={orgEdit.name} onChange={(e) => setOrgEdit({ ...orgEdit, name: e.target.value })} /></label>
+          <label className="field"><span>Apresentação</span><textarea value={orgEdit.description ?? ''} onChange={(e) => setOrgEdit({ ...orgEdit, description: e.target.value })} /></label>
+          <label className="field"><span>Logo</span><ImageInput value={orgEdit.logo_url} name={`orgs/${orgEdit.name || 'sem-nome'}/logo`} onChange={(url) => setOrgEdit({ ...orgEdit, logo_url: url })} /></label>
+          <label className="field"><span>Cor tema</span><input type="color" value={orgEdit.theme_color} onChange={(e) => setOrgEdit({ ...orgEdit, theme_color: e.target.value })} /></label>
+          <div className="admin-actions">
+            <button className="btn btn-primary">Salvar org</button>
+            <button type="button" className="btn" onClick={() => setOrgEdit(null)}>Cancelar</button>
+          </div>
+        </form>
+      ) : null}
       {!frozen ? (
         <form className="admin-form" onSubmit={add}>
           <label className="field">
@@ -380,6 +407,19 @@ export default function AdminAlbumsPage() {
       setError((e as Error).message);
     }
   };
+  const lifecycle = async (row: Row, action: 'pause' | 'resume' | 'end') => {
+    let body: Row = {};
+    if (action === 'end' && !window.confirm(`Encerrar "${row.title}" agora? O fim passa a ser este instante, as trocas abertas fecham e não tem volta.`)) return;
+    if (action === 'pause' && !window.confirm(`Pausar "${row.title}"? Os jogadores perdem acesso até você retomar.`)) return;
+    if (action === 'resume') body = { extend: window.confirm('Somar ao fim do álbum o tempo que ficou pausado?') };
+    setError('');
+    try {
+      await post(`/admin/albums/${row.id}/${action}`, body);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
   const open = rows.find((row) => row.id === openId) ?? null;
 
   return (
@@ -412,6 +452,9 @@ export default function AdminAlbumsPage() {
               <span className="admin-row-actions">
                 <button className="link" onClick={() => setOpenId(row.id === openId ? null : row.id)}>{row.id === openId ? 'Fechar' : 'Abrir'}</button>
                 {row.status !== 'ended' ? <button className="link" onClick={() => setEditing(row)}>Editar</button> : null}
+                {row.status === 'active' || row.status === 'scheduled' ? <button className="link" onClick={() => lifecycle(row, 'pause')}>Pausar</button> : null}
+                {row.status === 'paused' ? <button className="link" onClick={() => lifecycle(row, 'resume')}>Retomar</button> : null}
+                {row.status === 'active' || row.status === 'paused' ? <button className="link danger" onClick={() => lifecycle(row, 'end')}>Encerrar agora</button> : null}
                 <button className="link" onClick={() => duplicate(row)}>Duplicar</button>
                 {row.status === 'draft' || row.status === 'scheduled' ? <button className="link danger" onClick={() => remove(row)}>Apagar</button> : null}
               </span>

@@ -20,7 +20,7 @@ def require_editable(album: Album, structural: bool = False) -> None:
     status = album_status(album)
     if status == "ended":
         raise HTTPException(409, CLOSED)
-    if structural and status == "active":
+    if structural and status in ("active", "paused"):
         raise HTTPException(409, FROZEN)
 
 

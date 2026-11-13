@@ -37,6 +37,29 @@ def _revision(db: Session, revision_id: int, user: User) -> ChapterRevision:
     return revision
 
 
+# ---- Nome do capítulo (o nome da org: vale no sumário, nas páginas, na gestão de cargos e nas revisões)
+class RenameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+@router.put("/chapters/{chapter_id}/name")
+def rename_chapter(chapter_id: int, body: RenameIn, admin: User = Depends(admin_user), db: Session = Depends(get_db)):
+    chapter = _chapter(db, chapter_id)
+    name = " ".join(body.name.split())
+    if not name:
+        raise HTTPException(400, "O nome não pode ficar em branco.")
+    old = chapter.org.name
+    if name != old:
+        chapter.org.name = name
+        # A revisão em aberto carrega o nome antigo no bloco da org: sem isto, publicá-la desfaria a mudança.
+        open_revision = revisions.open_revision(db, chapter.id)
+        if open_revision is not None and (open_revision.content or {}).get("org"):
+            open_revision.content = {**open_revision.content, "org": {**open_revision.content["org"], "name": name}}
+        audit(db, admin.id, "admin.chapter_rename", chapter_id=chapter.id, org_id=chapter.org_id, old=old, new=name)
+        db.commit()
+    return {"chapter_id": chapter.id, "name": chapter.org.name}
+
+
 # ---- Papéis
 class GrantIn(BaseModel):
     email: str = Field(max_length=254)

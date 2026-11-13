@@ -16,6 +16,7 @@ from sqlalchemy import func, select, text
 
 from app.models import (
     Album,
+    Org,
     AlbumChapter,
     Asset,
     AuditLog,
@@ -814,6 +815,29 @@ def test_mosaico_muda_de_tamanho_e_gira_na_pagina_com_album_em_andamento(db, alb
     assert player.get(f"/api/album/orgs/{org_id}/pages/0").json()["org"]["mosaic_scale"] == 1
 
 
+def test_superadmin_renomeia_o_capitulo_em_todo_lugar_e_nao_perde_na_revisao_aberta(db, album, chapter, editor, admin, make_user, login):
+    _, client = editor
+    _, admin_client = admin
+    draft = draft_of(client, chapter)["content"]
+    assert save(client, chapter, draft).status_code == 200  # revisão aberta com o nome antigo
+    old = db.get(AlbumChapter, chapter.id).org.name
+    assert editor[1].put(f"/api/admin/chapters/{chapter.id}/name", json={"name": "X"}).status_code == 403  # só superadmin
+    assert admin_client.put(f"/api/admin/chapters/{chapter.id}/name", json={"name": "   "}).status_code in (400, 422)
+    done = admin_client.put(f"/api/admin/chapters/{chapter.id}/name", json={"name": "  Tubarões   Renomeados "})
+    assert done.status_code == 200 and done.json()["name"] == "Tubarões Renomeados"
+    overview = admin_client.get("/api/admin/editors/overview").json()
+    assert [r["org_name"] for r in overview if r["chapter_id"] == chapter.id] == ["Tubarões Renomeados"]
+    player = login(make_user("Le"))
+    assert "Tubarões Renomeados" in [o["name"] for o in player.get("/api/album").json()["orgs"]]
+    # O editor reabre o rascunho e já vê o nome novo; publicar não desfaz a mudança.
+    assert draft_of(client, chapter)["content"]["org"]["name"] == "Tubarões Renomeados"
+    revision_id = submit_and_approve(client, admin_client, chapter, draft_of(client, chapter)["content"])
+    assert admin_client.post(f"/api/admin/revisions/{revision_id}/publish", json={}).status_code == 200
+    db.expire_all()
+    assert db.get(AlbumChapter, chapter.id).org.name == "Tubarões Renomeados" != old
+    assert db.scalar(select(AuditLog).where(AuditLog.action == "admin.chapter_rename")) is not None
+
+
 def test_figurinha_gira_na_pagina_mesmo_com_album_em_andamento(db, album, chapter, content, editor, admin):
     _, client = editor
     _, admin_client = admin
@@ -1262,3 +1286,46 @@ def test_identidade_da_org_valida_cor_logo_e_conteudo_antigo(db, chapter, editor
     # Rascunho sem `org` (formato antigo) continua válido e não mexe na org.
     old = {k: v for k, v in draft.items() if k != "org"}
     assert save(client, chapter, old).status_code == 200
+
+
+def test_superadmin_pausa_retoma_e_encerra_o_album_antes_do_fim(db, album, chapter, editor, admin, make_user, login):
+    _, editor_client = editor
+    _, admin_client = admin
+    base = f"/api/admin/albums/{album.id}"
+    album.state = "ready"
+    album.starts_at, album.ends_at = now() - timedelta(days=1), now() + timedelta(days=10)
+    db.commit()
+    for action in ("pause", "resume", "end"):  # revisor/editor não mexem no ciclo do álbum
+        assert editor_client.post(f"{base}/{action}", json={}).status_code == 403
+    player = login(make_user("Joga"))
+    assert player.get("/api/album").status_code == 200
+    assert admin_client.post(f"{base}/resume", json={}).status_code == 409  # não está pausado
+    paused = admin_client.post(f"{base}/pause").json()
+    assert paused["status"] == "paused"
+    assert player.get("/api/album").json()["album"] is None  # fora do ar
+    editing = admin_client.put(base, json={
+        "title": album.title, "starts_at": paused["starts_at"], "ends_at": (now() + timedelta(days=20)).isoformat(), "state": "ready",
+    })
+    assert editing.status_code == 200, editing.text  # dá para mudar o fim com o álbum pausado
+    resumed = admin_client.post(f"{base}/resume", json={"extend": True})
+    assert resumed.json()["status"] == "active"
+    ended = admin_client.post(f"{base}/end")
+    assert ended.status_code == 200 and ended.json()["status"] == "ended"
+    assert admin_client.post(f"{base}/pause").status_code == 409
+    actions = {a for a in db.scalars(select(AuditLog.action))}
+    assert {"admin.album_pause", "admin.album_resume", "admin.album_end"} <= actions
+
+
+def test_apagar_capitulo_com_a_org_e_editar_a_org(db, album, chapter, admin):
+    _, admin_client = admin
+    org_id = chapter.org_id
+    changed = admin_client.put(f"/api/admin/orgs/{org_id}", json={"name": "Nova Org", "theme_color": "#112233"})
+    assert changed.status_code == 200 and changed.json()["name"] == "Nova Org"
+    for sticker in db.scalars(select(Sticker).where(Sticker.org_id == org_id)).all():
+        db.delete(sticker)
+    db.execute(text("UPDATE album SET state = 'draft' WHERE id = :i"), {"i": album.id})  # estrutura só muda fora do ar
+    db.commit()
+    done = admin_client.delete(f"/api/admin/albums/{album.id}/chapters/{chapter.id}?delete_org=true")
+    assert done.status_code == 204, done.text
+    db.expire_all()
+    assert db.get(Org, org_id) is None
