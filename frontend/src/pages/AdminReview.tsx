@@ -21,7 +21,7 @@ const ACTION: Record<string, string> = {
   'role.grant': 'Papel concedido', 'role.revoke': 'Papel revogado', 'revision.submit': 'Revisão enviada', 'revision.edit': 'Rascunho editado', 'promo.codes_create': 'Códigos gerados', 'revision.withdraw': 'Envio retirado',
   'revision.approve': 'Revisão aprovada', 'revision.reject': 'Revisão rejeitada', 'revision.publish': 'Revisão publicada',
   'revision.rollback': 'Rollback', 'asset.upload': 'Imagem enviada', 'asset.delete': 'Imagem apagada',
-  'admin.chapter_create': 'Capítulo criado',
+  'admin.chapter_create': 'Capítulo criado', 'admin.chapter_rename': 'Capítulo renomeado', 'admin.org_update': 'Org editada', 'admin.org_delete': 'Org apagada', 'admin.album_pause': 'Álbum pausado', 'admin.album_resume': 'Álbum retomado', 'admin.album_end': 'Álbum encerrado antes',
 };
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
 const SIZES: Record<string, string> = { P: 'Pequena', M: 'Média', G: 'Grande' };
@@ -352,6 +352,7 @@ function Detail({ id, admin, onChanged, onClose }: { id: number; admin: boolean;
 function Editors({ rows, reload }: { rows: Row[]; reload: () => void }) {
   const [email, setEmail] = useState<Record<number, string>>({});
   const [role, setRole] = useState<Record<number, 'editor' | 'reviewer'>>({});
+  const [renaming, setRenaming] = useState<{ id: number; value: string } | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const { run, prompt } = useMfa();
   const guard = async (action: () => Promise<unknown>) => {
@@ -362,6 +363,14 @@ function Editors({ rows, reload }: { rows: Row[]; reload: () => void }) {
     } catch (err) {
       setError(err as Error);
     }
+  };
+  const rename = (event: FormEvent) => {
+    event.preventDefault();
+    if (!renaming) return;
+    guard(async () => {
+      await api(`/admin/chapters/${renaming.id}/name`, { method: 'PUT', body: { name: renaming.value } });
+      setRenaming(null);
+    });
   };
   const grant = (event: FormEvent, chapterId: number) => {
     event.preventDefault();
@@ -380,7 +389,15 @@ function Editors({ rows, reload }: { rows: Row[]; reload: () => void }) {
         {rows.map((row) => (
           <li key={row.chapter_id}>
             <span>
-              <i className="dot" style={{ background: row.org_color }} /> <b>{row.org_name}</b>
+              <i className="dot" style={{ background: row.org_color }} /> <b>{row.org_name}</b>{' '}
+              {row.album_status !== 'ended' ? <button type="button" className="link" onClick={() => setRenaming({ id: row.chapter_id, value: row.org_name })}>Renomear</button> : null}
+              {renaming?.id === row.chapter_id ? (
+                <form className="inline-form rename-form" onSubmit={rename}>
+                  <input aria-label={`Novo nome de ${row.org_name}`} required maxLength={120} autoFocus value={renaming?.value ?? ''} onChange={(e) => setRenaming({ id: row.chapter_id, value: e.target.value })} />
+                  <button className="btn btn-primary">Salvar nome</button>
+                  <button type="button" className="btn" onClick={() => setRenaming(null)}>Cancelar</button>
+                </form>
+              ) : null}
               <small className="album-dates">
                 {row.album_title} ({ALBUM[row.album_status]}) · {row.revision ? `revisão ${row.revision.number}: ${STATUS[row.revision.status]}` : 'sem revisão em aberto'} · última edição {when(row.last_edit_at)}
               </small>

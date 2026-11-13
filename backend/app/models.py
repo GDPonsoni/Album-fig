@@ -56,6 +56,7 @@ class Album(Base):
     starts_at: Mapped[datetime] = mapped_column(Timestamp)
     ends_at: Mapped[datetime] = mapped_column(Timestamp)
     state: Mapped[str] = mapped_column(_enum("draft", "ready", name="album_state"), default="draft", server_default="draft")
+    paused_at: Mapped[datetime | None] = mapped_column(Timestamp)  # pausa manual: o álbum sai do ar até retomar
     created_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now())
 
     # A exclusão "um álbum pronto por vez por universidade" (ex_album_ready_overlap) é criada na migration 0004.

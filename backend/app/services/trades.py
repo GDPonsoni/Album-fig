@@ -42,7 +42,7 @@ def current_trade(db: Session, user: User) -> Trade | None:
             Trade.state.in_(LIVE),
             or_(Trade.creator_id == user.id, Trade.partner_id == user.id),
             # Troca de álbum que acabou não conta mais como "em andamento".
-            Album.state == "ready", Album.starts_at <= moment, Album.ends_at > moment,
+            Album.state == "ready", Album.paused_at.is_(None), Album.starts_at <= moment, Album.ends_at > moment,
         )
         .order_by(Trade.created_at.desc())
     ).all()

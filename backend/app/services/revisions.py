@@ -373,7 +373,7 @@ def apply_content(
     if unknown:
         raise HTTPException(422, "Há ajuste de raridade ou número para figurinha que não está no conteúdo.")
 
-    if status == "active":
+    if status in ("active", "paused"):
         problems = structural_problems(db, chapter, content)
         for key, change in overrides.items():
             row = existing.get(key)
@@ -428,7 +428,7 @@ def apply_content(
             continue
         for field, value in values.items():
             setattr(row, field, value)
-        if status != "active":
+        if status not in ("active", "paused"):
             row.active = item.active
             if rarity_id is not None:
                 row.rarity_id = rarity_id
@@ -536,7 +536,7 @@ def save_draft(db: Session, user: User, chapter: AlbumChapter, data: Any) -> Cha
     album = _album(db, chapter)
     content = parse_content(data)
     check_references(db, chapter, content)
-    if album_status(album) == "active":
+    if album_status(album) in ("active", "paused"):
         problems = structural_problems(db, chapter, content)
         if problems:
             raise HTTPException(409, f"{FROZEN}: {'; '.join(problems)}.")

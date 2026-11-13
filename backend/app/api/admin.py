@@ -148,12 +148,12 @@ def update_album(album_id: int, body: AlbumIn, admin: User = Depends(admin_user)
     status = albums.album_status(album)
     if status == "ended":
         raise HTTPException(409, content.CLOSED)
-    if status == "active":
-        # Em andamento, o álbum não some da mão de quem está jogando nem muda de início.
+    if status in ("active", "paused"):
+        # No ar (ou pausado), o álbum não some da mão de quem joga nem muda de início.
         if body.state != "ready" or body.starts_at != album.starts_at:
             raise HTTPException(409, "Álbum em andamento: só título, capa e data de fim podem mudar.")
         if body.ends_at <= now():
-            raise HTTPException(409, "Para encerrar antes, escolha uma data de fim no futuro.")
+            raise HTTPException(409, "Para encerrar antes, use \"Encerrar agora\" ou escolha uma data de fim no futuro.")
     old_cover = album.cover_url
     with _album_errors(db):
         for key, value in body.model_dump().items():
@@ -164,6 +164,51 @@ def update_album(album_id: int, body: AlbumIn, admin: User = Depends(admin_user)
         )
     if old_cover != album.cover_url:
         content.remove_media_if_unused(db, old_cover)
+    return _album_row(db, album)
+
+
+@router.post("/albums/{album_id}/pause")
+def pause_album(album_id: int, admin: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Tira o álbum do ar sem perder nada. Trocas em andamento caem na varredura; o resto fica como está."""
+    album = _get(db, Album, album_id)
+    if albums.album_status(album) not in ("active", "scheduled"):
+        raise HTTPException(409, "Só dá para pausar um álbum agendado ou em andamento.")
+    album.paused_at = now()
+    audit(db, admin.id, "admin.album_pause", album_id=album.id)
+    db.commit()
+    return _album_row(db, album)
+
+
+class ResumeIn(BaseModel):
+    extend: bool = False  # soma ao fim o tempo que ficou pausado
+
+
+@router.post("/albums/{album_id}/resume")
+def resume_album(album_id: int, body: ResumeIn, admin: User = Depends(admin_user), db: Session = Depends(get_db)):
+    album = _get(db, Album, album_id)
+    if albums.album_status(album) != "paused":
+        raise HTTPException(409, "Este álbum não está pausado.")
+    paused_for = now() - album.paused_at
+    with _album_errors(db):
+        if body.extend and album.starts_at <= album.paused_at:
+            album.ends_at = album.ends_at + paused_for
+        album.paused_at = None
+        audit(db, admin.id, "admin.album_resume", album_id=album.id, extended=body.extend, paused_seconds=int(paused_for.total_seconds()))
+    return _album_row(db, album)
+
+
+@router.post("/albums/{album_id}/end")
+def end_album(album_id: int, admin: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Encerra agora, sem volta: o fim passa a ser este instante e o fechamento roda como no fim normal."""
+    album = _get(db, Album, album_id)
+    if albums.album_status(album) not in ("active", "paused"):
+        raise HTTPException(409, "Só dá para encerrar um álbum em andamento ou pausado.")
+    moment = now()
+    with _album_errors(db):
+        album.ends_at, album.paused_at = moment, None
+        audit(db, admin.id, "admin.album_end", album_id=album.id)
+    albums.close_due_albums(db, admin.university_id)
+    db.commit()
     return _album_row(db, album)
 
 
@@ -273,7 +318,9 @@ def update_chapter(album_id: int, chapter_id: int, body: ChapterUpdate, db: Sess
 
 
 @router.delete("/albums/{album_id}/chapters/{chapter_id}", status_code=204)
-def delete_chapter(album_id: int, chapter_id: int, admin: User = Depends(admin_user), db: Session = Depends(get_db)):
+def delete_chapter(
+    album_id: int, chapter_id: int, delete_org: bool = False, admin: User = Depends(admin_user), db: Session = Depends(get_db)
+):
     chapter = _chapter(db, album_id, chapter_id)
     content.require_editable(_get(db, Album, album_id), structural=True)
     if db.scalar(
@@ -281,10 +328,24 @@ def delete_chapter(album_id: int, chapter_id: int, admin: User = Depends(admin_u
     ):
         raise HTTPException(409, "Remova as figurinhas do capítulo antes de apagá-lo.")
     image = chapter.mosaic_image_url
+    org = chapter.org
     db.delete(chapter)
+    db.flush()
     audit(db, admin.id, "admin.chapter_delete", album_id=album_id, chapter_id=chapter_id)
+    logo = None
+    if delete_org:
+        elsewhere = db.scalar(select(func.count()).select_from(AlbumChapter).where(AlbumChapter.org_id == org.id)) or db.scalar(
+            select(func.count()).select_from(Sticker).where(Sticker.org_id == org.id)
+        )
+        if elsewhere:
+            db.rollback()
+            raise HTTPException(409, "Esta org também está em outro álbum e não pode ser apagada.")
+        logo = org.logo_url
+        audit(db, admin.id, "admin.org_delete", org_id=org.id, name=org.name)
+        db.delete(org)
     db.commit()
     content.remove_media_if_unused(db, image)
+    content.remove_media_if_unused(db, logo)
 
 
 class MosaicIn(BaseModel):
@@ -452,11 +513,13 @@ def create_org(body: OrgIn, admin: User = Depends(admin_user), db: Session = Dep
 
 
 @router.put("/orgs/{org_id}")
-def update_org(org_id: int, body: OrgIn, db: Session = Depends(get_db)):
+def update_org(org_id: int, body: OrgIn, admin: User = Depends(admin_user), db: Session = Depends(get_db)):
     org = _get(db, Org, org_id)
     old_logo = org.logo_url
+    old_name = org.name
     for key, value in body.model_dump().items():
         setattr(org, key, value)
+    audit(db, admin.id, "admin.org_update", org_id=org.id, old_name=old_name, name=org.name)
     db.commit()
     if old_logo != org.logo_url:
         content.remove_media_if_unused(db, old_logo)

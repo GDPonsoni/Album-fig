@@ -55,7 +55,7 @@ def _chapter_view(db: Session, chapter: AlbumChapter) -> dict:
         },
         "album": album_view(album),
         # Em andamento só o cosmético muda; encerrado, nada.
-        "frozen": album_status(album) == "active",
+        "frozen": album_status(album) in ("active", "paused"),
         "closed": album_status(album) == "ended",
     }
 

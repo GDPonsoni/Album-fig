@@ -283,7 +283,7 @@ function ConfigEditor() {
   );
 }
 
-const ALBUM_STATUS: Record<string, string> = { draft: 'rascunho', scheduled: 'agendado', active: 'em andamento', ended: 'encerrado' };
+const ALBUM_STATUS: Record<string, string> = { draft: 'rascunho', scheduled: 'agendado', paused: 'pausado', active: 'em andamento', ended: 'encerrado' };
 const TABS = ['Métricas', 'Orgs', 'Figurinhas', 'Pacotes', 'Raridades', 'Códigos', 'Parâmetros'] as const;
 
 export default function AdminPage() {

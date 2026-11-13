@@ -30,18 +30,21 @@ from app.services.core import audit, now
 
 NO_ALBUM = "Nenhum álbum em andamento."
 ENDED = "Álbum encerrado."
+PAUSED = "Álbum pausado. Volta em breve."
 LIVE_TRADES = ("open", "active")
 
 
 def album_status(album: Album, moment: datetime | None = None) -> str:
-    """draft | scheduled | active | ended. O fim é exclusivo: em `ends_at` o álbum já acabou."""
+    """draft | scheduled | paused | active | ended. O fim é exclusivo: em `ends_at` o álbum já acabou."""
     if album.state != "ready":
         return "draft"
     moment = moment or now()
-    if moment < album.starts_at:
-        return "scheduled"
     if moment >= album.ends_at:
         return "ended"
+    if album.paused_at is not None:
+        return "paused"
+    if moment < album.starts_at:
+        return "scheduled"
     return "active"
 
 
@@ -71,6 +74,7 @@ def current_album(db: Session, user: User) -> Album | None:
         select(Album).where(
             Album.university_id == user.university_id,
             Album.state == "ready",
+            Album.paused_at.is_(None),
             Album.starts_at <= moment,
             Album.ends_at > moment,
         )
@@ -87,6 +91,11 @@ def require_live(db: Session, user: User) -> Album:
         .where(Album.university_id == user.university_id, Album.state == "ready", Album.ends_at <= now())
         .limit(1)
     )
+    paused = db.scalar(
+        select(Album.id).where(Album.university_id == user.university_id, Album.state == "ready", Album.paused_at.is_not(None), Album.ends_at > now()).limit(1)
+    )
+    if paused is not None:
+        raise HTTPException(409, PAUSED)
     raise HTTPException(409, ENDED if ended is not None else NO_ALBUM)
 
 
